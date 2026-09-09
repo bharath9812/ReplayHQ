@@ -1,0 +1,13 @@
+db-data
+db-data/**
+storage
+storage/**
+node_modules
+.next
+.git
+.DS_Store
+._*
+stitch_gamevault_footage_archive
+*.part
+*.tar.gz
+*.log

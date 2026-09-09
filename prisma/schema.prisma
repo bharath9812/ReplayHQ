@@ -1,0 +1,125 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum ProcessingStatus {
+  PENDING
+  UPLOADING
+  ANALYZING
+  GENERATING_PREVIEWS
+  READY
+  FAILED
+}
+
+model Game {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  slug        String   @unique
+  folderName  String
+  matchRules  Json     // JSON Array of pattern strings, e.g. ["GTA", "Grand Theft Auto"]
+  accentColor String   @default("#007AFF")
+  icon        String?  // Lucide icon name: "Car", "Gamepad2", "Crosshair", "Sword", etc.
+  clips       Clip[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([slug])
+}
+
+model Clip {
+  id               String           @id @default(uuid())
+  title            String
+  description      String?
+  originalFilename String
+  sha256           String           @unique
+  fileSize         BigInt
+  duration         Float            @default(0)
+  width            Int              @default(1920)
+  height           Int              @default(1080)
+  fps              Float            @default(60.0)
+  codec            String           @default("h264")
+  audioCodec       String?
+  bitrate          Float?
+  colorSpace       String?
+  pixFmt           String?
+  audioChannels    Int?
+  audioSampleRate  Int?
+  deviceModel      String?
+  
+  // Storage absolute or relative paths
+  storageOriginal     String        // Immutable master file
+  storageThumbnail    String?       // High-res WebP poster
+  storageStoryboard   String?       // Tiled WebP sprite sheet
+  storageStoryboardVtt String?      // WebVTT index for timeline scrubbing
+  storagePreview      String?       // Web-compatible 1080p proxy stream
+  
+  status       ProcessingStatus @default(PENDING)
+  errorMessage String?
+  
+  // Relationships
+  gameId      String?
+  game        Game?            @relation(fields: [gameId], references: [id], onDelete: SetNull)
+  folder      String?          // Subfolder / Subcategory e.g. "Season-19", "Scrims", "Boss Fights"
+  tags        ClipTag[]
+  highlights  Highlight[]
+  
+  isFavorite  Boolean          @default(false)
+  isTrash     Boolean          @default(false)
+  trashedAt   DateTime?
+  recordedAt  DateTime?        // Parsed from QuickTime / MP4 creation_time metadata
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([gameId])
+  @@index([gameId, folder])
+  @@index([folder])
+  @@index([status])
+  @@index([isTrash])
+  @@index([createdAt(sort: Desc)])
+  @@index([recordedAt(sort: Desc)])
+}
+
+model Tag {
+  id        String    @id @default(uuid())
+  name      String    @unique
+  color     String    @default("#8E8E93")
+  clips     ClipTag[]
+  createdAt DateTime  @default(now())
+
+  @@index([name])
+}
+
+model ClipTag {
+  clipId String
+  tagId  String
+  clip   Clip @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  tag    Tag  @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([clipId, tagId])
+  @@index([tagId])
+  @@index([clipId])
+}
+
+model Highlight {
+  id          String   @id @default(uuid())
+  clipId      String
+  clip        Clip     @relation(fields: [clipId], references: [id], onDelete: Cascade)
+  title       String
+  startTime   Float
+  endTime     Float
+  storageClip String?  // Path to trimmed MP4 clip
+  createdAt   DateTime @default(now())
+
+  @@index([clipId])
+}
+
+model Setting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}

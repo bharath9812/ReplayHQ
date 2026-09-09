@@ -1,0 +1,17 @@
+{
+  "name": "GameVault - Apple HIG Gaming Footage Vault",
+  "short_name": "GameVault",
+  "description": "High-fidelity gaming footage archive, clip management & highlight studio",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#000000",
+  "theme_color": "#0A0A0C",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}
