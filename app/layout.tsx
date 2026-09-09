@@ -41,6 +41,23 @@ export default function RootLayout({
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200"
           rel="stylesheet"
         />
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `
+              (function() {
+                try {
+                  var w = localStorage.getItem('gamevault_sidebar_width');
+                  if (w) {
+                    var num = parseInt(w, 10);
+                    if (!isNaN(num) && num >= 180 && num <= 500) {
+                      document.documentElement.style.setProperty('--sidebar-width', num + 'px');
+                    }
+                  }
+                } catch (e) {}
+              })();
+            `,
+          }}
+        />
       </head>
       <body className="h-[100dvh] w-screen overflow-hidden bg-background font-body-md text-body-md text-on-surface antialiased select-none">
         <ThemeProvider>{children}</ThemeProvider>

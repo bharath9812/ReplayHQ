@@ -1250,6 +1250,9 @@ export function UploadModal({
           try {
             localStorage.removeItem("gamevault_active_upload");
           } catch {}
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(new CustomEvent("gamevault:sync"));
+          }
         }
       } else {
         updateStagedFile(item.id, {

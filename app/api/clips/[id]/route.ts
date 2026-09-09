@@ -3,6 +3,7 @@ import prisma from "@/lib/db/prisma";
 import { getClipById } from "@/lib/db/clipService";
 import { probeVideo } from "@/lib/media/probe";
 import fs from "fs";
+import { invalidateStorageStatsCache } from "@/lib/vaultStorage/statsCache";
 
 export const dynamic = "force-dynamic";
 
@@ -97,7 +98,7 @@ export async function PATCH(
     const updateData: any = {};
     if (typeof title === "string") updateData.title = title;
     if (typeof description === "string") updateData.description = description;
-    if (gameId !== undefined) updateData.gameId = gameId === "" ? null : gameId;
+    if (gameId !== undefined) updateData.gameId = (gameId === "" || gameId === "uncategorized" || gameId === null) ? null : gameId;
     if (folder !== undefined) updateData.folder = folder === "" || folder === "none" ? null : folder;
     if (typeof isFavorite === "boolean") updateData.isFavorite = isFavorite;
 
@@ -131,6 +132,10 @@ export async function PATCH(
       }
     }
 
+    if (typeof isTrash === "boolean") {
+      invalidateStorageStatsCache();
+    }
+
     const updated = await prisma.clip.update({
       where: { id: params.id },
       data: updateData,
@@ -162,6 +167,9 @@ export async function DELETE(
     if (!clip) {
       return NextResponse.json({ success: false, error: "Clip not found" }, { status: 404 });
     }
+
+    // Invalidate storage cache so next stats query is fresh
+    invalidateStorageStatsCache();
 
     // If not yet in trash, move to trash first (safeguard)
     const { searchParams } = new URL(req.url);

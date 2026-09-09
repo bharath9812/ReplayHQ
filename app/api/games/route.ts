@@ -46,10 +46,52 @@ export async function GET() {
         clipCount: g._count.clips,
         totalBytes: Number(totalBytes),
         folders,
+        isUncategorized: false,
       };
     });
 
-    return NextResponse.json({ success: true, games: gamesWithStats });
+    // Query Uncategorized clips (where gameId is null and not trashed)
+    const uncategorizedClips = await prisma.clip.findMany({
+      where: { gameId: null, isTrash: false },
+      select: { fileSize: true, folder: true },
+    });
+
+    let uncategorizedBytes = BigInt(0);
+    const uncategorizedFolderMap = new Map<string, { name: string; clipCount: number; totalBytes: number }>();
+
+    for (const c of uncategorizedClips) {
+      uncategorizedBytes += c.fileSize;
+      if (c.folder && c.folder.trim()) {
+        const fName = c.folder.trim();
+        const existing = uncategorizedFolderMap.get(fName) || { name: fName, clipCount: 0, totalBytes: 0 };
+        existing.clipCount += 1;
+        existing.totalBytes += Number(c.fileSize);
+        uncategorizedFolderMap.set(fName, existing);
+      }
+    }
+
+    const uncategorizedFolders = Array.from(uncategorizedFolderMap.values()).sort((a, b) =>
+      a.name.localeCompare(b.name)
+    );
+
+    const uncategorizedCategory = {
+      id: "uncategorized",
+      name: "Uncategorized",
+      slug: "uncategorized",
+      folderName: "uncategorized",
+      matchRules: [],
+      accentColor: "#8E8E93",
+      icon: "help_outline",
+      clipCount: uncategorizedClips.length,
+      totalBytes: Number(uncategorizedBytes),
+      folders: uncategorizedFolders,
+      isUncategorized: true,
+    };
+
+    return NextResponse.json({
+      success: true,
+      games: [...gamesWithStats, uncategorizedCategory],
+    });
   } catch (err: any) {
     return NextResponse.json({ success: false, error: err.message }, { status: 500 });
   }
@@ -67,20 +109,35 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const slug = name
+    const cleanName = name.trim();
+    if (cleanName.toLowerCase() === "uncategorized") {
+      return NextResponse.json(
+        { success: false, error: "The name 'Uncategorized' is reserved for system categories" },
+        { status: 400 }
+      );
+    }
+
+    const slug = cleanName
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "-")
       .replace(/(^-|-$)/g, "");
+
+    if (slug === "uncategorized") {
+      return NextResponse.json(
+        { success: false, error: "The slug 'uncategorized' is reserved for system categories" },
+        { status: 400 }
+      );
+    }
 
     const rules = Array.isArray(matchRules)
       ? matchRules
       : typeof matchRules === "string"
       ? matchRules.split(",").map((s) => s.trim()).filter(Boolean)
-      : [name];
+      : [cleanName];
 
     const game = await prisma.game.create({
       data: {
-        name,
+        name: cleanName,
         slug,
         folderName: folderName.toLowerCase().replace(/[^a-z0-9_-]/g, ""),
         matchRules: rules,
@@ -104,6 +161,13 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Game ID is required" }, { status: 400 });
     }
 
+    if (id === "uncategorized") {
+      return NextResponse.json(
+        { success: false, error: "Cannot modify the built-in system Uncategorized category" },
+        { status: 400 }
+      );
+    }
+
     const rules = Array.isArray(matchRules)
       ? matchRules
       : typeof matchRules === "string"
@@ -113,7 +177,7 @@ export async function PUT(req: NextRequest) {
     const updated = await prisma.game.update({
       where: { id },
       data: {
-        ...(name ? { name } : {}),
+        ...(name ? { name: name.trim() } : {}),
         ...(folderName ? { folderName } : {}),
         ...(rules !== undefined ? { matchRules: rules } : {}),
         ...(accentColor ? { accentColor } : {}),
@@ -132,6 +196,13 @@ export async function DELETE(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const id = searchParams.get("id");
     const unusedOnly = searchParams.get("unused") === "true";
+
+    if (id === "uncategorized") {
+      return NextResponse.json(
+        { success: false, error: "Cannot delete the built-in system Uncategorized category" },
+        { status: 400 }
+      );
+    }
 
     if (unusedOnly) {
       // Find all categories with 0 active clips

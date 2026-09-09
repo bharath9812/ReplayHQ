@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { Sidebar, GameInfo, CollectionInfo } from "@/components/Sidebar";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Sidebar, GameInfo, CollectionInfo, triggerVaultSync } from "@/components/Sidebar";
 import { Navbar } from "@/components/Navbar";
 import { ClipCard, ClipData } from "@/components/ClipCard";
 import { ProcessingSafetyView } from "@/components/ProcessingSafetyView";
@@ -62,19 +62,124 @@ export default function DashboardPage() {
   const [isSelectMode, setIsSelectMode] = useState(false);
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set());
 
-  // Persistent Collapsible Sidebar State (Desktop & iPad)
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  // Persistent Collapsible & Resizable Sidebar State (Server-backed + optimistic localStorage)
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const saved = localStorage.getItem("gamevault_sidebar_collapsed");
+        if (saved !== null) return saved === "true";
+      } catch {}
+    }
+    return false;
+  });
 
-  useEffect(() => {
+  const [sidebarWidth, setSidebarWidth] = useState<number>(260);
+
+  // Debounce ref for live dragging saves
+  const sidebarPersistTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Robust server & client persistence function
+  const persistSidebarWidth = useCallback((width: number) => {
+    // 1. Instant synchronous write to localStorage, CSS Variable & Cookie
     try {
-      const saved = localStorage.getItem("gamevault_sidebar_collapsed");
-      if (saved !== null) {
-        setIsSidebarCollapsed(saved === "true");
+      localStorage.setItem("gamevault_sidebar_width", String(width));
+      localStorage.setItem("gamevault_sidebar_width_ts", String(Date.now()));
+      if (typeof document !== "undefined") {
+        document.documentElement.style.setProperty("--sidebar-width", `${width}px`);
+        document.cookie = `gamevault_sidebar_width=${width}; path=/; max-age=31536000; SameSite=Lax`;
       }
-    } catch {
-      // Ignore in restricted environments
+    } catch {}
+
+    // 2. Guaranteed unmount-resistant dispatch to server (keepalive survives immediate refresh)
+    try {
+      fetch("/api/settings", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ key: "sidebar_width", value: String(width) }),
+        keepalive: true,
+      }).catch((err) => {
+        console.error("Failed to persist sidebar width to server:", err);
+      });
+    } catch (err) {
+      console.error("Failed to persist sidebar width:", err);
     }
   }, []);
+
+  // Hydrate sidebar settings on client mount (immediately from localStorage, then synced with server)
+  useEffect(() => {
+    // 1. Instantly read localStorage on client mount so sidebar snaps to user preference with zero delay
+    try {
+      const savedWidth = localStorage.getItem("gamevault_sidebar_width");
+      if (savedWidth) {
+        const num = parseInt(savedWidth, 10);
+        if (!isNaN(num) && num >= 180 && num <= 500) {
+          setSidebarWidth(num);
+          document.documentElement.style.setProperty("--sidebar-width", `${num}px`);
+        }
+      }
+      const savedCollapsed = localStorage.getItem("gamevault_sidebar_collapsed");
+      if (savedCollapsed !== null) {
+        setIsSidebarCollapsed(savedCollapsed === "true");
+      }
+    } catch {}
+
+    // 2. Sync with database settings (for cross-device / fresh browser sync)
+    const fetchServerSettings = async () => {
+      try {
+        const res = await fetch("/api/settings");
+        const data = await res.json();
+        if (data.success && data.settings) {
+          const localSaved = localStorage.getItem("gamevault_sidebar_width");
+          if (!localSaved && data.settings.sidebar_width) {
+            const num = parseInt(data.settings.sidebar_width, 10);
+            if (!isNaN(num) && num >= 180 && num <= 500) {
+              setSidebarWidth(num);
+              document.documentElement.style.setProperty("--sidebar-width", `${num}px`);
+              try {
+                localStorage.setItem("gamevault_sidebar_width", String(num));
+              } catch {}
+            }
+          }
+          const localCol = localStorage.getItem("gamevault_sidebar_collapsed");
+          if (localCol === null && data.settings.sidebar_collapsed !== undefined) {
+            const isCol = data.settings.sidebar_collapsed === "true";
+            setIsSidebarCollapsed(isCol);
+            try {
+              localStorage.setItem("gamevault_sidebar_collapsed", String(isCol));
+            } catch {}
+          }
+        }
+      } catch {
+        // Gracefully keep local values
+      }
+    };
+    fetchServerSettings();
+  }, []);
+
+  const handleSidebarResize = useCallback((newWidth: number) => {
+    setSidebarWidth(newWidth);
+    // Instant local save & CSS variable update on every pixel moved
+    try {
+      localStorage.setItem("gamevault_sidebar_width", String(newWidth));
+      localStorage.setItem("gamevault_sidebar_width_ts", String(Date.now()));
+      if (typeof document !== "undefined") {
+        document.documentElement.style.setProperty("--sidebar-width", `${newWidth}px`);
+      }
+    } catch {}
+
+    // Debounced server save while dragging (if user stops moving for 250ms, save immediately)
+    if (sidebarPersistTimerRef.current) clearTimeout(sidebarPersistTimerRef.current);
+    sidebarPersistTimerRef.current = setTimeout(() => {
+      persistSidebarWidth(newWidth);
+    }, 250);
+  }, [persistSidebarWidth]);
+
+  const handleSidebarResizeEnd = useCallback((finalWidth: number) => {
+    // Cancel debounce timer and execute immediate synchronous commit
+    if (sidebarPersistTimerRef.current) clearTimeout(sidebarPersistTimerRef.current);
+    setSidebarWidth(finalWidth);
+    persistSidebarWidth(finalWidth);
+  }, [persistSidebarWidth]);
 
   const toggleSidebarCollapse = useCallback(() => {
     if (typeof window !== "undefined" && window.innerWidth < 768) {
@@ -86,6 +191,30 @@ export default function DashboardPage() {
       try {
         localStorage.setItem("gamevault_sidebar_collapsed", String(next));
       } catch {}
+      const payload = JSON.stringify({ key: "sidebar_collapsed", value: String(next) });
+      try {
+        if (typeof navigator !== "undefined" && typeof navigator.sendBeacon === "function") {
+          const blob = new Blob([payload], { type: "application/json" });
+          const sent = navigator.sendBeacon("/api/settings", blob);
+          if (!sent) {
+            fetch("/api/settings", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: payload,
+              keepalive: true,
+            }).catch(() => {});
+          }
+        } else {
+          fetch("/api/settings", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: payload,
+            keepalive: true,
+          }).catch(() => {});
+        }
+      } catch (err) {
+        console.error("Failed to persist collapse to server:", err);
+      }
       return next;
     });
   }, []);
@@ -296,11 +425,53 @@ export default function DashboardPage() {
     }
   };
 
+  const refreshAllData = useCallback(() => {
+    fetchClips();
+    fetchGames();
+    fetchCollections();
+    fetchStats();
+    triggerVaultSync();
+  }, [fetchClips, fetchGames, fetchCollections, fetchStats]);
+
   useEffect(() => {
     fetchGames();
     fetchStats();
     fetchCollections();
   }, [fetchGames, fetchStats, fetchCollections]);
+
+  // Real-time Event Listener (Cross-component synchronization)
+  useEffect(() => {
+    const handleVaultSync = () => {
+      fetchGames();
+      fetchCollections();
+      fetchStats();
+    };
+    window.addEventListener("gamevault:sync", handleVaultSync);
+    return () => window.removeEventListener("gamevault:sync", handleVaultSync);
+  }, [fetchGames, fetchCollections, fetchStats]);
+
+  // Real-time Polling & Window Focus sync (3s interval for live host storage updates)
+  useEffect(() => {
+    const onFocus = () => {
+      fetchGames();
+      fetchCollections();
+      fetchStats();
+    };
+    window.addEventListener("focus", onFocus);
+
+    const timer = setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "visible") {
+        fetchGames();
+        fetchCollections();
+        fetchStats();
+      }
+    }, 3000);
+
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      clearInterval(timer);
+    };
+  }, [fetchGames, fetchCollections, fetchStats]);
 
   useEffect(() => {
     fetchClips();
@@ -480,6 +651,9 @@ export default function DashboardPage() {
           setSelectedClip(null);
         }
         fetchStats();
+        fetchGames();
+        fetchCollections();
+        triggerVaultSync();
       }
     } catch (err) {
       console.error("Failed to toggle trash:", err);
@@ -517,6 +691,7 @@ export default function DashboardPage() {
       await handleToggleTrash(id, false);
     }
     handleDeselectAll();
+    triggerVaultSync();
   };
 
   // Bulk Move Selected Clips to a Folder
@@ -541,6 +716,8 @@ export default function DashboardPage() {
         fetchClips();
         fetchStats();
         fetchGames();
+        fetchCollections();
+        triggerVaultSync();
       } else {
         alert(data.error || "Failed to organize clips");
       }
@@ -573,6 +750,8 @@ export default function DashboardPage() {
         setSelectedClipIds(new Set());
         fetchCollections();
         fetchClips();
+        fetchGames();
+        fetchStats();
       } else {
         alert(data.error || "Failed to add clips to collection");
       }
@@ -634,10 +813,13 @@ export default function DashboardPage() {
   const appStorageBytesStr = formatBytes(appTotalBytes);
   const totalBytesStr = appStorageBytesStr;
 
-  const poolTotalBytes = systemStats?.storage?.poolTotalBytes || 4 * 1024 * 1024 * 1024 * 1024;
-  const poolAvailableBytes = systemStats?.storage?.poolAvailableBytes ?? systemStats?.storage?.poolFreeBytes ?? (3.2 * 1024 * 1024 * 1024 * 1024);
+  const poolTotalBytes = systemStats?.storage?.poolTotalBytes || 225 * 1024 * 1024 * 1024;
+  const poolUsedBytes = systemStats?.storage?.poolUsedBytes ?? (183 * 1024 * 1024 * 1024);
+  const poolUsedPercent = systemStats?.storage?.poolUsedPercent ?? 86;
+  const poolAvailableBytes = systemStats?.storage?.poolAvailableBytes ?? systemStats?.storage?.poolFreeBytes ?? (32.4 * 1024 * 1024 * 1024);
   const serverAvailableBytesStr = formatBytes(poolAvailableBytes);
   const serverTotalBytesStr = formatBytes(poolTotalBytes);
+  const serverUsedBytesStr = formatBytes(poolUsedBytes);
   const appStorageUsedPercent = Math.min(100, Math.max(1, Math.round((appTotalBytes / poolTotalBytes) * 100)));
 
   const activeProcessingCount = systemStats?.pipeline?.activeProcessingCount ?? 0;
@@ -702,8 +884,6 @@ export default function DashboardPage() {
         return "Continue Watching";
       case "favorites":
         return "Favorites";
-      case "watched-status":
-        return "Watched & Unwatched";
       case "collection-bosses":
         return "Boss Battles & Clutch Wins";
       case "collection-2026-highlights":
@@ -746,7 +926,9 @@ export default function DashboardPage() {
         appStorageBytesStr={appStorageBytesStr}
         serverAvailableBytesStr={serverAvailableBytesStr}
         serverTotalBytesStr={serverTotalBytesStr}
+        serverUsedBytesStr={serverUsedBytesStr}
         appStorageUsedPercent={appStorageUsedPercent}
+        storagePoolUsedPercent={poolUsedPercent}
         hostName={systemStats?.host?.hostname || "Debian Host"}
         collectionsCounts={collectionsCounts}
         collections={collections}
@@ -756,6 +938,9 @@ export default function DashboardPage() {
         favoriteCount={favoriteCount}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={toggleSidebarCollapse}
+        sidebarWidth={sidebarWidth}
+        onResizeSidebar={handleSidebarResize}
+        onResizeEnd={handleSidebarResizeEnd}
         isOpenMobile={isOpenMobileSidebar}
         onCloseMobile={() => setIsOpenMobileSidebar(false)}
         onOpenUpload={() => setIsUploadOpen(true)}
@@ -1822,7 +2007,8 @@ export default function DashboardPage() {
           clip={activePlayerClip}
           allClips={clips}
           onClose={closePlayer}
-          onRefreshClip={fetchClips}
+          onSelectOtherClip={(targetClip) => openPlayer(targetClip)}
+          onRefreshClip={refreshAllData}
           onUpdateClip={(updated) => {
             setClips((prev) => prev.map((c) => (c.id === updated.id ? updated : c)));
             setActivePlayerClip(updated);
@@ -1830,6 +2016,8 @@ export default function DashboardPage() {
               setSelectedClip(updated);
             }
             fetchStats();
+            fetchGames();
+            fetchCollections();
           }}
         />
       )}
@@ -1845,6 +2033,7 @@ export default function DashboardPage() {
             fetchStats();
             fetchGames();
             fetchCollections();
+            triggerVaultSync();
           }}
           games={games}
           collections={collections}
@@ -1887,6 +2076,7 @@ export default function DashboardPage() {
             fetchClips();
             fetchStats();
             fetchGames();
+            fetchCollections();
           }}
         />
       )}

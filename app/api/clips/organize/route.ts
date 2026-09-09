@@ -20,7 +20,11 @@ export async function POST(req: NextRequest) {
     const where: any = { isTrash: false };
 
     if (gameId) {
-      where.gameId = gameId;
+      if (gameId === "uncategorized") {
+        where.gameId = null;
+      } else {
+        where.gameId = gameId;
+      }
     }
 
     if (Array.isArray(clipIds) && clipIds.length > 0) {

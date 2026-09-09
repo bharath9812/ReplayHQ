@@ -3,12 +3,13 @@ import prisma from "@/lib/db/prisma";
 import { classifyClip } from "@/lib/media/classifier";
 import { probeVideo } from "@/lib/media/probe";
 import { generatePoster, generateStoryboard } from "@/lib/media/thumbnails";
-import { getOriginalPath, getThumbnailPath, getStoryboardImagePath, getStoryboardVttPath } from "@/lib/storage/paths";
-import { STORAGE_DIRS, ensureStorageDirectories } from "@/lib/storage/config";
+import { getOriginalPath, getThumbnailPath, getStoryboardImagePath, getStoryboardVttPath } from "@/lib/vaultStorage/paths";
+import { STORAGE_DIRS, ensureStorageDirectories } from "@/lib/vaultStorage/config";
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import { pipeline } from "stream/promises";
+import { invalidateStorageStatsCache } from "@/lib/vaultStorage/statsCache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -294,6 +295,9 @@ export async function POST(req: NextRequest) {
         console.warn("Error attaching clip to collections:", colErr);
       }
     }
+
+    // Invalidate cached storage telemetry so real-time calls instantly see new file
+    invalidateStorageStatsCache();
 
     return NextResponse.json(
       {

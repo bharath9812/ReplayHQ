@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/db/prisma";
 import fs from "fs";
 import { generatePoster } from "@/lib/media/thumbnails";
-import { getThumbnailPath } from "@/lib/storage/paths";
+import { getThumbnailPath } from "@/lib/vaultStorage/paths";
 
 export async function GET(
   req: NextRequest,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/db/prisma";
 import { extractLosslessClip } from "@/lib/media/clipper";
-import { getHighlightPath } from "@/lib/storage/paths";
+import { getHighlightPath } from "@/lib/vaultStorage/paths";
 import fs from "fs";
 
 export async function POST(

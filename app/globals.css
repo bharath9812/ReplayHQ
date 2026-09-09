@@ -2,6 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  --sidebar-width: 260px;
+}
+
 @layer base {
   html,
   body {
@@ -98,4 +102,20 @@
 
 .animate-fade-in {
   animation: fadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes indeterminateSweep {
+  0% {
+    transform: translateX(-100%);
+  }
+  50% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+.animate-indeterminate-bar {
+  animation: indeterminateSweep 0.9s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }

@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import fs from "fs";
 import prisma from "@/lib/db/prisma";
 import { generatePoster, generateStoryboard } from "@/lib/media/thumbnails";
-import { getThumbnailPath, getStoryboardImagePath, getStoryboardVttPath } from "@/lib/storage/paths";
+import { getThumbnailPath, getStoryboardImagePath, getStoryboardVttPath } from "@/lib/vaultStorage/paths";
 
 export const dynamic = "force-dynamic";
 

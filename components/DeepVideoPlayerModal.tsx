@@ -87,13 +87,13 @@ export function DeepVideoPlayerModal({
   const [isFavoriteUpdating, setIsFavoriteUpdating] = useState(false);
   const handleToggleFavoriteRef = useRef<() => void>(() => {});
 
-  // Distinct folders for this clip's game from allClips
+  // Distinct folders for this clip's game (or uncategorized) from allClips
   const availableFoldersForGame = useMemo(() => {
     const set = new Set<string>();
-    const targetGameId = clip?.game?.id || clip?.gameId;
-    if (!targetGameId || !allClips) return [];
+    const targetGameId = clip?.game?.id || clip?.gameId || null;
+    if (!allClips) return [];
     for (const c of allClips) {
-      const cGameId = c.game?.id || c.gameId;
+      const cGameId = c.game?.id || c.gameId || null;
       if (cGameId === targetGameId && c.folder) {
         set.add(c.folder);
       }
@@ -133,6 +133,42 @@ export function DeepVideoPlayerModal({
   const lastTapTimeRef = useRef<number>(0);
   const lastTapSideRef = useRef<"left" | "right" | "center" | null>(null);
   const isTouchActiveRef = useRef(false);
+
+  // Forward & Rewind Button Animation States
+  const [forwardAnimating, setForwardAnimating] = useState(false);
+  const [rewindAnimating, setRewindAnimating] = useState(false);
+  const forwardTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const rewindTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const triggerForwardAnim = useCallback(() => {
+    setForwardAnimating(true);
+    if (forwardTimerRef.current) clearTimeout(forwardTimerRef.current);
+    forwardTimerRef.current = setTimeout(() => {
+      setForwardAnimating(false);
+    }, 350);
+  }, []);
+
+  const triggerRewindAnim = useCallback(() => {
+    setRewindAnimating(true);
+    if (rewindTimerRef.current) clearTimeout(rewindTimerRef.current);
+    rewindTimerRef.current = setTimeout(() => {
+      setRewindAnimating(false);
+    }, 350);
+  }, []);
+
+  // Clip Switch Transition State (YouTube/Netflix-Style Smooth Stream Transition)
+  const [isTransitioning, setIsTransitioning] = useState(false);
+  const [transitioningClipId, setTransitioningClipId] = useState<string | null>(null);
+  const transitionTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const shouldAutoPlayRef = useRef(false);
+
+  useEffect(() => {
+    return () => {
+      if (forwardTimerRef.current) clearTimeout(forwardTimerRef.current);
+      if (rewindTimerRef.current) clearTimeout(rewindTimerRef.current);
+      if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+    };
+  }, []);
 
   // Detect Desktop Viewport for Responsive Inspector Layout
   useEffect(() => {
@@ -335,7 +371,34 @@ export function DeepVideoPlayerModal({
       if (trimOut <= 0 || trimOut > dur) {
         setTrimOut(dur);
       }
+      if (shouldAutoPlayRef.current) {
+        shouldAutoPlayRef.current = false;
+        videoRef.current
+          .play()
+          .then(() => setIsPlaying(true))
+          .catch(() => setIsPlaying(false));
+      }
     }
+    if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+    transitionTimerRef.current = setTimeout(() => {
+      setIsTransitioning(false);
+      setTransitioningClipId(null);
+    }, 280);
+  };
+
+  const handleCanPlay = () => {
+    if (shouldAutoPlayRef.current && videoRef.current) {
+      shouldAutoPlayRef.current = false;
+      videoRef.current
+        .play()
+        .then(() => setIsPlaying(true))
+        .catch(() => setIsPlaying(false));
+    }
+    if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+    transitionTimerRef.current = setTimeout(() => {
+      setIsTransitioning(false);
+      setTransitioningClipId(null);
+    }, 220);
   };
 
   const togglePlay = useCallback(() => {
@@ -343,14 +406,12 @@ export function DeepVideoPlayerModal({
     if (isPlaying) {
       videoRef.current.pause();
       setIsPlaying(false);
-      showHudFeedback("Paused", "pause");
     } else {
       videoRef.current.play().catch(() => {});
       setIsPlaying(true);
-      showHudFeedback("Playing", "play_arrow");
     }
     triggerControlsActivity();
-  }, [isPlaying, showHudFeedback, triggerControlsActivity]);
+  }, [isPlaying, triggerControlsActivity]);
 
   const seekTo = useCallback(
     (seconds: number) => {
@@ -435,22 +496,22 @@ export function DeepVideoPlayerModal({
         case "j":
         case "J":
           seekTo(currentTime - 10);
-          showHudFeedback("-10s", "replay_10");
+          triggerRewindAnim();
           break;
         case "l":
         case "L":
           seekTo(currentTime + 10);
-          showHudFeedback("+10s", "forward_10");
+          triggerForwardAnim();
           break;
         case "ArrowLeft":
           e.preventDefault();
           seekTo(currentTime - 5);
-          showHudFeedback("-5s", "replay_5");
+          triggerRewindAnim();
           break;
         case "ArrowRight":
           e.preventDefault();
           seekTo(currentTime + 5);
-          showHudFeedback("+5s", "forward_5");
+          triggerForwardAnim();
           break;
         case "ArrowUp":
           e.preventDefault();
@@ -536,6 +597,8 @@ export function DeepVideoPlayerModal({
     toggleFullscreen,
     togglePlay,
     triggerControlsActivity,
+    triggerForwardAnim,
+    triggerRewindAnim,
     showDeleteDialog,
     isTagPickerOpen,
     isEditingDesc,
@@ -605,10 +668,10 @@ export function DeepVideoPlayerModal({
       // Double tap detected!
       if (side === "left") {
         seekTo(currentTime - 10);
-        showHudFeedback("-10s", "replay_10");
+        triggerRewindAnim();
       } else if (side === "right") {
         seekTo(currentTime + 10);
-        showHudFeedback("+10s", "forward_10");
+        triggerForwardAnim();
       } else {
         togglePlay();
       }
@@ -913,6 +976,9 @@ export function DeepVideoPlayerModal({
         showHudFeedback(force ? "Footage Purged" : "Moved to Trash", "delete");
         setShowDeleteDialog(false);
         onRefreshClip?.();
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(new CustomEvent("gamevault:sync"));
+        }
         onClose();
       } else {
         alert(data.error || "Failed to delete clip");
@@ -947,7 +1013,54 @@ export function DeepVideoPlayerModal({
   const bgPosX = (spriteCol / 9) * 100;
   const bgPosY = (spriteRow / 9) * 100;
 
-  const relatedClips = allClips.filter((c) => c.id !== clip.id).slice(0, 4);
+  const relatedClips = useMemo(() => {
+    if (!allClips || allClips.length === 0 || !clip?.id) return [];
+    const others = allClips.filter((c) => c.id !== clip.id);
+    const targetGameId = clip.game?.id || clip.gameId || null;
+    const sameGame = others.filter((c) => {
+      const cGameId = c.game?.id || c.gameId || null;
+      return targetGameId && cGameId === targetGameId;
+    });
+    const differentGame = others.filter((c) => !sameGame.includes(c));
+    return [...sameGame, ...differentGame].slice(0, 8);
+  }, [allClips, clip?.id, clip?.gameId, clip?.game?.id]);
+
+  const handleSelectRelatedClip = useCallback(
+    (targetClip: ClipData) => {
+      if (targetClip.id === clip?.id) return;
+      setIsTransitioning(true);
+      setTransitioningClipId(targetClip.id);
+      shouldAutoPlayRef.current = true;
+
+      // Smoothly scroll back to top of player stage
+      if (theatreContainerRef.current) {
+        theatreContainerRef.current.scrollTo({ top: 0, behavior: "smooth" });
+      }
+
+      // Reset playback states
+      setCurrentTime(0);
+      setIsPlaying(false);
+      if (videoRef.current) {
+        videoRef.current.currentTime = 0;
+        videoRef.current.pause();
+      }
+
+      // Update active clip immediately
+      setClip(targetClip);
+
+      if (onSelectOtherClip) {
+        onSelectOtherClip(targetClip);
+      }
+
+      // Safety timeout: transition resolves smoothly if browser throttles events
+      if (transitionTimerRef.current) clearTimeout(transitionTimerRef.current);
+      transitionTimerRef.current = setTimeout(() => {
+        setIsTransitioning(false);
+        setTransitioningClipId(null);
+      }, 750);
+    },
+    [clip?.id, onSelectOtherClip]
+  );
 
   const filteredAvailableTags = availableTags.filter((t) =>
     !tagQuery ? true : t.name.toLowerCase().includes(tagQuery.toLowerCase().trim().replace(/^#+/, ""))
@@ -1410,15 +1523,37 @@ export function DeepVideoPlayerModal({
                 : "aspect-[16/9] lg:aspect-[21/9] max-h-[62vh] bg-black cursor-pointer"
             }`}
           >
-            {/* Real HTML5 Streaming Video */}
+            {/* YouTube-Style Dynamic Stream Switch Shimmer Line */}
+            {isTransitioning && (
+              <div className="absolute top-0 inset-x-0 h-[2.5px] z-50 overflow-hidden pointer-events-none">
+                <div className="h-full w-full bg-gradient-to-r from-transparent via-primary to-transparent animate-indeterminate-bar shadow-[0_0_12px_rgba(56,189,248,0.9)]" />
+              </div>
+            )}
+
+            {/* Cinematic Ambient Backdrop Glow (Netflix-Style Smooth Dissolve) */}
+            <div
+              className={`absolute inset-0 -z-10 bg-cover bg-center filter blur-3xl scale-110 pointer-events-none transition-opacity duration-500 ease-out ${
+                isTransitioning ? "opacity-10" : "opacity-25"
+              }`}
+              style={{
+                backgroundImage: `url('/api/clips/${clip.id}/thumbnail?t=${clip.updatedAt ? new Date(clip.updatedAt).getTime() : 1}')`,
+              }}
+            />
+
+            {/* Real HTML5 Streaming Video with Crossfade Transition */}
             <video
               ref={videoRef}
               src={`/api/clips/${clip.id}/stream`}
               poster={`/api/clips/${clip.id}/thumbnail?t=${clip.updatedAt ? new Date(clip.updatedAt).getTime() : 1}`}
               onTimeUpdate={handleTimeUpdate}
               onLoadedMetadata={handleLoadedMetadata}
+              onCanPlay={handleCanPlay}
               playsInline
-              className="w-full h-full object-contain pointer-events-none"
+              className={`w-full h-full object-contain pointer-events-none transition-all duration-300 ease-out ${
+                isTransitioning
+                  ? "opacity-35 scale-[0.985] filter blur-[1.5px]"
+                  : "opacity-100 scale-100 filter-none"
+              }`}
             />
 
             {/* Center Frosted Play Button (Windowed Mode when Paused) */}
@@ -1464,14 +1599,14 @@ export function DeepVideoPlayerModal({
               </>
             )}
 
-            {/* Quick Center Flash HUD Feedback Badge */}
+            {/* Top Floating Non-Intrusive HUD Status Pill */}
             {hudFeedback && (
-              <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-50">
-                <div className="px-5 py-3 rounded-2xl bg-black/85 border border-white/20 backdrop-blur-xl flex items-center gap-2.5 text-white shadow-2xl animate-fade-in">
-                  <span className="material-symbols-outlined text-2xl text-primary">
+              <div className="absolute top-6 inset-x-0 flex justify-center pointer-events-none z-50">
+                <div className="px-4 py-2 rounded-full bg-black/85 border border-white/20 backdrop-blur-xl flex items-center gap-2 text-white shadow-2xl animate-fade-in">
+                  <span className="material-symbols-outlined text-lg text-primary">
                     {hudFeedback.icon}
                   </span>
-                  <span className="font-semibold text-sm tracking-tight">{hudFeedback.text}</span>
+                  <span className="font-medium text-xs tracking-tight">{hudFeedback.text}</span>
                 </div>
               </div>
             )}
@@ -1537,12 +1672,22 @@ export function DeepVideoPlayerModal({
                     onClick={(e) => {
                       e.stopPropagation();
                       seekTo(currentTime - 10);
-                      showHudFeedback("-10s", "replay_10");
+                      triggerRewindAnim();
                     }}
-                    className="w-14 h-14 rounded-full bg-black/60 hover:bg-black/80 border border-white/20 backdrop-blur-md text-white flex items-center justify-center active:scale-95 transition-all shadow-xl cursor-pointer"
-                    title="Rewind 10s"
+                    className={`w-14 h-14 rounded-full border backdrop-blur-md flex items-center justify-center transition-all duration-200 shadow-xl cursor-pointer ${
+                      rewindAnimating
+                        ? "scale-125 bg-primary/30 border-primary text-primary ring-4 ring-primary/40 shadow-primary/40 -rotate-12"
+                        : "bg-black/60 hover:bg-black/80 border-white/20 text-white active:scale-95"
+                    }`}
+                    title="Rewind 10s (J / Left Arrow)"
                   >
-                    <span className="material-symbols-outlined text-3xl">replay_10</span>
+                    <span
+                      className={`material-symbols-outlined text-3xl transition-transform duration-200 ${
+                        rewindAnimating ? "-rotate-45 scale-110" : ""
+                      }`}
+                    >
+                      replay_10
+                    </span>
                   </button>
 
                   <button
@@ -1562,12 +1707,22 @@ export function DeepVideoPlayerModal({
                     onClick={(e) => {
                       e.stopPropagation();
                       seekTo(currentTime + 10);
-                      showHudFeedback("+10s", "forward_10");
+                      triggerForwardAnim();
                     }}
-                    className="w-14 h-14 rounded-full bg-black/60 hover:bg-black/80 border border-white/20 backdrop-blur-md text-white flex items-center justify-center active:scale-95 transition-all shadow-xl cursor-pointer"
-                    title="Forward 10s"
+                    className={`w-14 h-14 rounded-full border backdrop-blur-md flex items-center justify-center transition-all duration-200 shadow-xl cursor-pointer ${
+                      forwardAnimating
+                        ? "scale-125 bg-primary/30 border-primary text-primary ring-4 ring-primary/40 shadow-primary/40 rotate-12"
+                        : "bg-black/60 hover:bg-black/80 border-white/20 text-white active:scale-95"
+                    }`}
+                    title="Forward 10s (L / Right Arrow)"
                   >
-                    <span className="material-symbols-outlined text-3xl">forward_10</span>
+                    <span
+                      className={`material-symbols-outlined text-3xl transition-transform duration-200 ${
+                        forwardAnimating ? "rotate-45 scale-110" : ""
+                      }`}
+                    >
+                      forward_10
+                    </span>
                   </button>
                 </div>
 
@@ -1617,21 +1772,43 @@ export function DeepVideoPlayerModal({
                       <button
                         onClick={() => {
                           seekTo(currentTime - 10);
-                          showHudFeedback("-10s", "replay_10");
+                          triggerRewindAnim();
                         }}
-                        className="hover:text-primary transition-colors cursor-pointer"
+                        className={`transition-all duration-200 cursor-pointer ${
+                          rewindAnimating
+                            ? "text-primary scale-125 -rotate-12 font-bold"
+                            : "hover:text-primary active:scale-95"
+                        }`}
+                        title="Rewind 10s"
                       >
-                        <span className="material-symbols-outlined text-2xl">replay_10</span>
+                        <span
+                          className={`material-symbols-outlined text-2xl transition-transform duration-200 ${
+                            rewindAnimating ? "-rotate-45" : ""
+                          }`}
+                        >
+                          replay_10
+                        </span>
                       </button>
 
                       <button
                         onClick={() => {
                           seekTo(currentTime + 10);
-                          showHudFeedback("+10s", "forward_10");
+                          triggerForwardAnim();
                         }}
-                        className="hover:text-primary transition-colors cursor-pointer"
+                        className={`transition-all duration-200 cursor-pointer ${
+                          forwardAnimating
+                            ? "text-primary scale-125 rotate-12 font-bold"
+                            : "hover:text-primary active:scale-95"
+                        }`}
+                        title="Forward 10s"
                       >
-                        <span className="material-symbols-outlined text-2xl">forward_10</span>
+                        <span
+                          className={`material-symbols-outlined text-2xl transition-transform duration-200 ${
+                            forwardAnimating ? "rotate-45" : ""
+                          }`}
+                        >
+                          forward_10
+                        </span>
                       </button>
 
                       <div className="flex items-center gap-1 ml-2 tabular-nums">
@@ -1789,23 +1966,43 @@ export function DeepVideoPlayerModal({
                   <button
                     onClick={() => {
                       seekTo(currentTime - 10);
-                      showHudFeedback("-10s", "replay_10");
+                      triggerRewindAnim();
                     }}
-                    className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer shrink-0"
+                    className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-all duration-200 cursor-pointer shrink-0 ${
+                      rewindAnimating
+                        ? "bg-primary/25 text-primary scale-125 -rotate-12 ring-2 ring-primary/50 shadow-md shadow-primary/20"
+                        : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container active:scale-95"
+                    }`}
                     title="Jump 10s Back (J / Left Arrow)"
                   >
-                    <span className="material-symbols-outlined text-[17px] sm:text-[18px]">replay_10</span>
+                    <span
+                      className={`material-symbols-outlined text-[17px] sm:text-[18px] transition-transform duration-200 ${
+                        rewindAnimating ? "-rotate-45" : ""
+                      }`}
+                    >
+                      replay_10
+                    </span>
                   </button>
 
                   <button
                     onClick={() => {
                       seekTo(currentTime + 10);
-                      showHudFeedback("+10s", "forward_10");
+                      triggerForwardAnim();
                     }}
-                    className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer shrink-0"
+                    className={`w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center transition-all duration-200 cursor-pointer shrink-0 ${
+                      forwardAnimating
+                        ? "bg-primary/25 text-primary scale-125 rotate-12 ring-2 ring-primary/50 shadow-md shadow-primary/20"
+                        : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container active:scale-95"
+                    }`}
                     title="Jump 10s Forward (L / Right Arrow)"
                   >
-                    <span className="material-symbols-outlined text-[17px] sm:text-[18px]">forward_10</span>
+                    <span
+                      className={`material-symbols-outlined text-[17px] sm:text-[18px] transition-transform duration-200 ${
+                        forwardAnimating ? "rotate-45" : ""
+                      }`}
+                    >
+                      forward_10
+                    </span>
                   </button>
 
                   {/* Elapsed / Total Timecode */}
@@ -1950,7 +2147,9 @@ export function DeepVideoPlayerModal({
           {!inActiveFullscreen && (
             <div className="p-4 sm:p-6 flex flex-col gap-4 bg-[#08090b]">
               {/* Clip Title & Verified Source Badge */}
-              <div className="flex flex-col gap-1.5">
+              <div className={`flex flex-col gap-1.5 transition-all duration-300 ease-out ${
+                isTransitioning ? "opacity-40 -translate-y-1" : "opacity-100 translate-y-0"
+              }`}>
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <h1 className="font-semibold text-base sm:text-lg text-on-surface tracking-tight leading-snug truncate">
@@ -2087,10 +2286,15 @@ export function DeepVideoPlayerModal({
 
               {/* Game Category & Subfolder Assignment Bar */}
               <div className="flex flex-wrap items-center gap-2 pt-2 pb-1 border-b border-outline-variant/20">
-                {clip.game && (
+                {clip.game ? (
                   <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-mono font-medium">
                     <span className="material-symbols-outlined text-[15px]">sports_esports</span>
                     <span>{clip.game.name}</span>
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container border border-outline-variant/30 text-zinc-400 text-xs font-mono font-medium">
+                    <span className="material-symbols-outlined text-[15px]">help_outline</span>
+                    <span>Uncategorized</span>
                   </span>
                 )}
 
@@ -2492,30 +2696,46 @@ export function DeepVideoPlayerModal({
                   </div>
 
                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-                    {relatedClips.map((rc) => (
-                      <div
-                        key={rc.id}
-                        onClick={() => (onSelectOtherClip ? onSelectOtherClip(rc) : null)}
-                        className="group/rel flex flex-col rounded-lg bg-surface-container p-1.5 border border-outline-variant/30 cursor-pointer hover:border-primary/60 transition-all active:scale-95"
-                      >
-                        <div className="relative aspect-video rounded overflow-hidden bg-black">
-                          <img
-                            src={`/api/clips/${rc.id}/thumbnail?t=${rc.updatedAt ? new Date(rc.updatedAt).getTime() : 1}`}
-                            alt={rc.title}
-                            className="w-full h-full object-cover group-hover/rel:scale-105 transition-transform"
-                          />
-                          <div className="absolute bottom-1 right-1 px-1 py-0.2 rounded bg-black/80 font-mono text-[9px] text-zinc-200">
-                            {formatTimecode(rc.duration || 0).slice(0, 5)}
+                    {relatedClips.map((rc) => {
+                      const isTarget = rc.id === transitioningClipId;
+                      return (
+                        <div
+                          key={rc.id}
+                          onClick={() => handleSelectRelatedClip(rc)}
+                          className={`group/rel flex flex-col rounded-lg bg-surface-container p-1.5 border transition-all cursor-pointer active:scale-95 ${
+                            isTarget
+                              ? "border-primary ring-2 ring-primary/60 shadow-lg shadow-primary/25 scale-[0.98] bg-primary/10"
+                              : "border-outline-variant/30 hover:border-primary/60 hover:bg-surface-container-high"
+                          }`}
+                        >
+                          <div className="relative aspect-video rounded overflow-hidden bg-black">
+                            <img
+                              src={`/api/clips/${rc.id}/thumbnail?t=${rc.updatedAt ? new Date(rc.updatedAt).getTime() : 1}`}
+                              alt={rc.title}
+                              className={`w-full h-full object-cover transition-transform duration-300 ${
+                                isTarget ? "scale-105 opacity-75" : "group-hover/rel:scale-105"
+                              }`}
+                            />
+                            {isTarget && (
+                              <div className="absolute inset-0 bg-black/40 backdrop-blur-[1px] flex items-center justify-center">
+                                <span className="w-5 h-5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                              </div>
+                            )}
+                            <div className="absolute bottom-1 right-1 px-1 py-0.2 rounded bg-black/80 font-mono text-[9px] text-zinc-200">
+                              {formatTimecode(rc.duration || 0).slice(0, 5)}
+                            </div>
                           </div>
+                          <span className={`text-xs truncate font-medium mt-1.5 transition-colors ${
+                            isTarget ? "text-primary font-semibold" : "text-on-surface"
+                          }`}>
+                            {rc.title}
+                          </span>
+                          <span className="text-[10px] text-zinc-500 truncate font-mono">
+                            {rc.game?.name || "Footage"}
+                          </span>
                         </div>
-                        <span className="text-xs text-on-surface truncate font-medium mt-1.5">
-                          {rc.title}
-                        </span>
-                        <span className="text-[10px] text-zinc-500 truncate font-mono">
-                          {rc.game?.name || "Footage"}
-                        </span>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
               )}

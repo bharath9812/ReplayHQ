@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useState, useRef, useCallback, useEffect } from "react";
 
 export interface GameInfo {
   id: string;
@@ -13,6 +13,7 @@ export interface GameInfo {
   clipCount?: number;
   totalBytes?: number;
   folders?: Array<{ name: string; clipCount: number; totalBytes: number }>;
+  isUncategorized?: boolean;
 }
 
 export interface CollectionInfo {
@@ -27,6 +28,12 @@ export interface CollectionInfo {
   clipCount?: number;
   totalBytes?: number;
   clipIds?: string[];
+}
+
+export function triggerVaultSync() {
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("gamevault:sync"));
+  }
 }
 
 interface SidebarProps {
@@ -48,6 +55,7 @@ interface SidebarProps {
   appStorageBytesStr?: string;
   serverAvailableBytesStr?: string;
   serverTotalBytesStr?: string;
+  serverUsedBytesStr?: string;
   appStorageUsedPercent?: number;
   hostName?: string;
   storagePoolTotalStr?: string;
@@ -65,6 +73,9 @@ interface SidebarProps {
   onOpenUpload: () => void;
   onOpenSettings: () => void;
   onOpenAddGame?: () => void;
+  sidebarWidth?: number;
+  onResizeSidebar?: (newWidth: number) => void;
+  onResizeEnd?: (finalWidth: number) => void;
 }
 
 function formatBytes(bytes?: number): string {
@@ -94,10 +105,11 @@ export function Sidebar({
   appStorageBytesStr,
   serverAvailableBytesStr,
   serverTotalBytesStr,
+  serverUsedBytesStr,
   appStorageUsedPercent,
   hostName,
-  storagePoolTotalStr = "4.0 TB",
-  storagePoolUsedPercent = 5,
+  storagePoolTotalStr = "225 GB",
+  storagePoolUsedPercent = 86,
   collectionsCounts = { bosses: 0, highlights: 0, longSessions: 0 },
   favoriteCount = 0,
   isCollapsed = false,
@@ -107,10 +119,136 @@ export function Sidebar({
   onOpenUpload,
   onOpenSettings,
   onOpenAddGame,
+  sidebarWidth = 260,
+  onResizeSidebar,
+  onResizeEnd,
 }: SidebarProps) {
   const displayAppStorage = appStorageBytesStr || totalBytesStr;
-  const displayServerAvailable = serverAvailableBytesStr || "3.2 TB";
+  const displayServerAvailable = serverAvailableBytesStr || "32.4 GB";
   const displayServerTotal = serverTotalBytesStr || storagePoolTotalStr;
+
+  // Resizing Drag State
+  const [isDragging, setIsDragging] = useState(false);
+  const asideRef = useRef<HTMLElement>(null);
+  const currentWidthRef = useRef(sidebarWidth);
+  currentWidthRef.current = sidebarWidth;
+
+  // Expanded folders per game
+  const [expandedGames, setExpandedGames] = useState<Record<string, boolean>>({});
+
+  const toggleGameExpanded = (slug: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedGames((prev) => ({
+      ...prev,
+      [slug]: prev[slug] !== undefined ? !prev[slug] : selectedGame !== slug,
+    }));
+  };
+
+  const isGameExpanded = (slug: string) => {
+    if (expandedGames[slug] !== undefined) {
+      return expandedGames[slug];
+    }
+    return selectedGame === slug;
+  };
+
+  // Mouse Drag Handler (with window capture for reliable drag across iframes/viewports)
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      setIsDragging(true);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+
+      const startX = e.clientX;
+      const startW = asideRef.current ? asideRef.current.getBoundingClientRect().width : (currentWidthRef.current || 260);
+
+      const onMouseMove = (moveEvent: MouseEvent) => {
+        const delta = moveEvent.clientX - startX;
+        const targetWidth = Math.min(480, Math.max(180, Math.round(startW + delta)));
+        document.documentElement.style.setProperty("--sidebar-width", `${targetWidth}px`);
+        try {
+          localStorage.setItem("gamevault_sidebar_width", String(targetWidth));
+        } catch {}
+        onResizeSidebar?.(targetWidth);
+      };
+
+      const onMouseUp = (upEvent: MouseEvent) => {
+        window.removeEventListener("mousemove", onMouseMove, { capture: true });
+        window.removeEventListener("mouseup", onMouseUp, { capture: true });
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+        setIsDragging(false);
+
+        const delta = upEvent.clientX - startX;
+        const finalW = Math.min(480, Math.max(180, Math.round(startW + delta)));
+        document.documentElement.style.setProperty("--sidebar-width", `${finalW}px`);
+        try {
+          localStorage.setItem("gamevault_sidebar_width", String(finalW));
+          localStorage.setItem("gamevault_sidebar_width_ts", String(Date.now()));
+        } catch {}
+        onResizeEnd?.(finalW);
+      };
+
+      window.addEventListener("mousemove", onMouseMove, { capture: true, passive: true });
+      window.addEventListener("mouseup", onMouseUp, { capture: true });
+    },
+    [onResizeSidebar, onResizeEnd]
+  );
+
+  // Touch Drag Handler (iPad / Touch devices)
+  const handleTouchStart = useCallback(
+    (e: React.TouchEvent) => {
+      if (e.touches.length !== 1) return;
+      setIsDragging(true);
+      const touch = e.touches[0];
+      const startX = touch.clientX;
+      const startW = asideRef.current ? asideRef.current.getBoundingClientRect().width : (currentWidthRef.current || 260);
+
+      const onTouchMove = (moveEvent: TouchEvent) => {
+        if (moveEvent.touches.length !== 1) return;
+        const delta = moveEvent.touches[0].clientX - startX;
+        const targetWidth = Math.min(480, Math.max(180, Math.round(startW + delta)));
+        document.documentElement.style.setProperty("--sidebar-width", `${targetWidth}px`);
+        try {
+          localStorage.setItem("gamevault_sidebar_width", String(targetWidth));
+        } catch {}
+        onResizeSidebar?.(targetWidth);
+      };
+
+      const onTouchEnd = (endEvent: TouchEvent) => {
+        window.removeEventListener("touchmove", onTouchMove, { capture: true });
+        window.removeEventListener("touchend", onTouchEnd, { capture: true });
+        setIsDragging(false);
+
+        let finalDelta = 0;
+        if (endEvent.changedTouches.length > 0) {
+          finalDelta = endEvent.changedTouches[0].clientX - startX;
+        }
+        const finalW = Math.min(480, Math.max(180, Math.round(startW + finalDelta)));
+        document.documentElement.style.setProperty("--sidebar-width", `${finalW}px`);
+        try {
+          localStorage.setItem("gamevault_sidebar_width", String(finalW));
+          localStorage.setItem("gamevault_sidebar_width_ts", String(Date.now()));
+        } catch {}
+        onResizeEnd?.(finalW);
+      };
+
+      window.addEventListener("touchmove", onTouchMove, { capture: true, passive: true });
+      window.addEventListener("touchend", onTouchEnd, { capture: true });
+    },
+    [onResizeSidebar, onResizeEnd]
+  );
+
+  const handleDoubleClickHandle = useCallback(() => {
+    document.documentElement.style.setProperty("--sidebar-width", "260px");
+    try {
+      localStorage.setItem("gamevault_sidebar_width", "260");
+      localStorage.setItem("gamevault_sidebar_width_ts", String(Date.now()));
+    } catch {}
+    onResizeSidebar?.(260);
+    onResizeEnd?.(260);
+  }, [onResizeSidebar, onResizeEnd]);
+
   return (
     <>
       {/* Mobile Backdrop */}
@@ -122,17 +260,40 @@ export function Sidebar({
       )}
 
       <aside
-        className={`fixed md:static top-0 left-0 h-[100dvh] w-64 bg-surface-container-lowest flex flex-col z-50 transition-all duration-300 ease-in-out shrink-0 select-none overflow-hidden ${
+        ref={asideRef}
+        style={{
+          width: isCollapsed ? 0 : "var(--sidebar-width, 260px)",
+        }}
+        className={`fixed md:static top-0 left-0 h-[100dvh] bg-surface-container-lowest flex flex-col z-50 shrink-0 select-none overflow-hidden relative ${
+          isDragging ? "transition-none select-none" : "transition-[width,opacity] duration-300 ease-in-out"
+        } ${
           isOpenMobile
             ? "translate-x-0 shadow-2xl md:shadow-none border-r border-outline-variant/40 pointer-events-auto"
             : "-translate-x-full md:translate-x-0 pointer-events-none md:pointer-events-auto"
         } ${
           isCollapsed
             ? "md:w-0 md:border-r-0 md:opacity-0 md:pointer-events-none"
-            : "md:w-64 md:border-r md:border-outline-variant/40 md:opacity-100"
+            : "md:border-r md:border-outline-variant/40 md:opacity-100"
         }`}
       >
-        <div className="w-64 h-full flex flex-col min-h-0">
+        {/* Draggable Border Handle for Width Resizing */}
+        {!isCollapsed && (
+          <div
+            onMouseDown={handleMouseDown}
+            onTouchStart={handleTouchStart}
+            onDoubleClick={handleDoubleClickHandle}
+            className="hidden md:block absolute top-0 right-0 w-2.5 h-full cursor-col-resize hover:bg-primary/40 active:bg-primary/70 z-30 transition-colors group"
+            title="Drag to resize sidebar width • Double-click to reset (260px)"
+          >
+            <div
+              className={`w-[1.5px] h-full mx-auto transition-colors ${
+                isDragging ? "bg-primary" : "bg-transparent group-hover:bg-primary/70"
+              }`}
+            />
+          </div>
+        )}
+
+        <div className="w-full h-full flex flex-col min-h-0">
           {/* Brand & Import */}
           <div className="p-space-md pb-space-sm flex flex-col gap-space-sm">
             <div className="flex items-center justify-between">
@@ -278,31 +439,14 @@ export function Sidebar({
                   </span>
                 )}
               </button>
-
-              <button
-                onClick={() => {
-                  onSelectView("watched-status");
-                  if (isOpenMobile) onCloseMobile();
-                }}
-                className={`w-full flex items-center justify-between px-space-sm py-space-xs transition-colors rounded-lg cursor-pointer text-left ${
-                  currentView === "watched-status"
-                    ? "bg-surface-container text-on-surface font-medium border border-outline-variant/30 shadow-xs"
-                    : "text-on-surface-variant hover:bg-surface-container/60 hover:text-on-surface"
-                }`}
-              >
-                <span className="flex items-center gap-space-sm font-body-sm text-body-sm">
-                  <span className="material-symbols-outlined text-[16px]">check_circle</span>
-                  Watched &amp; Unwatched
-                </span>
-              </button>
             </nav>
           </section>
 
-          {/* Games Section */}
+          {/* Games & Categories Section */}
           <section>
             <div className="flex items-center justify-between px-space-sm py-space-2xs">
               <span className="font-badge-caps text-badge-caps text-outline uppercase tracking-wider">
-                Games
+                Games &amp; Categories
               </span>
               <button
                 onClick={onOpenAddGame || onOpenSettings}
@@ -316,6 +460,13 @@ export function Sidebar({
               {games.map((game) => {
                 const isSelected = selectedGame === game.slug;
                 const hasFolders = Boolean(game.folders && game.folders.length > 0);
+                const isExpanded = isGameExpanded(game.slug);
+                const isUncat = game.slug === "uncategorized" || (game as any).isUncategorized;
+
+                // Calculate unfiled clips count for games that have subfolders
+                const folderTotalCount = game.folders?.reduce((acc, f) => acc + (f.clipCount || 0), 0) || 0;
+                const unfiledCount = Math.max(0, (game.clipCount || 0) - folderTotalCount);
+
                 return (
                   <div key={game.id} className="space-y-0.5">
                     <div className="flex items-center group relative">
@@ -334,10 +485,20 @@ export function Sidebar({
                       >
                         <div className="flex flex-col truncate pr-1">
                           <div className="flex items-center gap-1.5 truncate">
+                            {isUncat ? (
+                              <span className="material-symbols-outlined text-[15px] text-zinc-400 shrink-0">
+                                help_outline
+                              </span>
+                            ) : (
+                              <span
+                                className="w-2 h-2 rounded-full shrink-0"
+                                style={{ backgroundColor: game.accentColor || "#007AFF" }}
+                              />
+                            )}
                             <span className="font-body-sm text-body-sm truncate">{game.name}</span>
                             {hasFolders && (
-                              <span className="text-[10px] text-amber-400/70 font-mono bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20">
-                                {game.folders?.length} folders
+                              <span className="text-[10px] text-amber-400/80 font-mono bg-amber-500/10 px-1 py-0.2 rounded border border-amber-500/20 shrink-0">
+                                {game.folders?.length} {game.folders?.length === 1 ? "folder" : "folders"}
                               </span>
                             )}
                           </div>
@@ -347,6 +508,20 @@ export function Sidebar({
                         </div>
                       </button>
 
+                      {/* Expand/Collapse Folders Toggle Button */}
+                      {hasFolders && (
+                        <button
+                          onClick={(e) => toggleGameExpanded(game.slug, e)}
+                          className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-surface-container transition-colors cursor-pointer shrink-0 ml-0.5"
+                          title={isExpanded ? "Collapse subfolders" : "Expand subfolders"}
+                        >
+                          <span className="material-symbols-outlined text-[16px]">
+                            {isExpanded ? "expand_more" : "chevron_right"}
+                          </span>
+                        </button>
+                      )}
+
+                      {/* Smart Folder Organizer Action */}
                       {onOpenOrganizeFolder && (
                         <button
                           onClick={(e) => {
@@ -354,23 +529,26 @@ export function Sidebar({
                             onOpenOrganizeFolder(game.slug);
                           }}
                           title={`Smart Folder Organizer for ${game.name}`}
-                          className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-surface-container-high text-zinc-400 hover:text-amber-400 transition-all ml-1 cursor-pointer shrink-0"
+                          className="opacity-0 group-hover:opacity-100 p-1.5 rounded-md hover:bg-surface-container-high text-zinc-400 hover:text-amber-400 transition-all ml-0.5 cursor-pointer shrink-0"
                         >
                           <span className="material-symbols-outlined text-[15px]">drive_file_move</span>
                         </button>
                       )}
                     </div>
 
-                    {/* Subfolders when game is selected or expanded */}
-                    {hasFolders && isSelected && (
-                      <div className="ml-3 pl-2.5 border-l border-white/10 space-y-0.5 pt-0.5 pb-1">
+                    {/* Subfolders when expanded */}
+                    {hasFolders && isExpanded && (
+                      <div className="ml-3 pl-2.5 border-l border-white/10 space-y-0.5 pt-0.5 pb-1 animate-fade-in">
+                        {/* All Clips in this category */}
                         <button
                           onClick={() => {
+                            onSelectView("all-footage");
+                            onSelectGame(game.slug);
                             if (onSelectFolder) onSelectFolder(null);
                             if (isOpenMobile) onCloseMobile();
                           }}
                           className={`w-full flex items-center justify-between px-2 py-1 rounded text-xs transition-colors cursor-pointer text-left ${
-                            !selectedFolder
+                            isSelected && !selectedFolder
                               ? "text-primary font-medium bg-primary/10"
                               : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]"
                           }`}
@@ -384,12 +562,15 @@ export function Sidebar({
                           </span>
                         </button>
 
+                        {/* Each Named Subfolder */}
                         {game.folders?.map((f) => {
-                          const isFolderActive = selectedFolder === f.name;
+                          const isFolderActive = isSelected && selectedFolder === f.name;
                           return (
                             <button
                               key={f.name}
                               onClick={() => {
+                                onSelectView("all-footage");
+                                onSelectGame(game.slug);
                                 if (onSelectFolder) onSelectFolder(f.name);
                                 if (isOpenMobile) onCloseMobile();
                               }}
@@ -409,6 +590,32 @@ export function Sidebar({
                             </button>
                           );
                         })}
+
+                        {/* Optional Unfiled Footage Filter if unfiled clips exist */}
+                        {unfiledCount > 0 && (
+                          <button
+                            onClick={() => {
+                              onSelectView("all-footage");
+                              onSelectGame(game.slug);
+                              if (onSelectFolder) onSelectFolder("unfiled");
+                              if (isOpenMobile) onCloseMobile();
+                            }}
+                            className={`w-full flex items-center justify-between px-2 py-1 rounded text-xs transition-colors cursor-pointer text-left ${
+                              isSelected && selectedFolder === "unfiled"
+                                ? "text-amber-300 font-medium bg-amber-500/10 border border-amber-500/20"
+                                : "text-zinc-400 hover:text-zinc-200 hover:bg-white/[0.03]"
+                            }`}
+                            title="Clips not assigned to any specific subfolder"
+                          >
+                            <span className="flex items-center gap-1.5 truncate">
+                              <span className="material-symbols-outlined text-[13px] text-zinc-500">folder_off</span>
+                              <span className="truncate italic">Unfiled Clips</span>
+                            </span>
+                            <span className="text-[10px] text-zinc-500 font-mono">
+                              {unfiledCount}
+                            </span>
+                          </button>
+                        )}
                       </div>
                     )}
                   </div>
@@ -622,19 +829,36 @@ export function Sidebar({
             </div>
 
             {/* Visual Storage Bar */}
-            <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden mt-0.5 relative">
+            <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden mt-0.5 relative flex shadow-inner">
+              {/* GameVault App Media (Primary Blue) */}
               <div
-                style={{ width: `${Math.max(2, Math.min(100, appStorageUsedPercent ?? 3))}%` }}
-                className="h-full bg-primary rounded-full transition-all duration-500"
-                title={`GameVault uses ${displayAppStorage} of server capacity`}
+                style={{ width: `${Math.max(1, Math.min(100, appStorageUsedPercent ?? 3))}%` }}
+                className="h-full bg-primary transition-all duration-500 shrink-0"
+                title={`GameVault Media: ${displayAppStorage}`}
+              ></div>
+              {/* Other Host Storage on Server Volume (Vibrant Indigo) */}
+              <div
+                style={{
+                  width: `${Math.max(
+                    0,
+                    Math.min(
+                      100 - Math.max(1, appStorageUsedPercent ?? 3),
+                      (storagePoolUsedPercent ?? 86) - Math.max(1, appStorageUsedPercent ?? 3)
+                    )
+                  )}%`,
+                }}
+                className="h-full bg-indigo-500/90 transition-all duration-500 shrink-0"
+                title={`Other Server Storage: ${serverUsedBytesStr || "Host Storage"}`}
               ></div>
             </div>
 
             {/* Capacity breakdown footer */}
             {displayServerTotal && (
-              <div className="flex items-center justify-between text-[10px] font-mono text-zinc-500 pt-0.5">
-                <span>Total Server: {displayServerTotal}</span>
-                <span className="text-emerald-400/80">{displayServerAvailable} free</span>
+              <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400 pt-0.5">
+                <span>
+                  Total: {displayServerTotal} ({storagePoolUsedPercent ?? 86}% used)
+                </span>
+                <span className="text-emerald-400 font-medium">{displayServerAvailable} free</span>
               </div>
             )}
           </div>

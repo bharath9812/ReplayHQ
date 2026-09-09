@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/db/prisma";
 import { captureFrameSnapshot } from "@/lib/media/clipper";
-import { STORAGE_DIRS } from "@/lib/storage/config";
+import { STORAGE_DIRS } from "@/lib/vaultStorage/config";
 import path from "path";
 import fs from "fs";
 

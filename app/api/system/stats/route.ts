@@ -1,33 +1,10 @@
 import { NextResponse } from "next/server";
 import os from "os";
 import fs from "fs";
-import path from "path";
 import prisma from "@/lib/db/prisma";
-import { STORAGE_ROOT, STORAGE_DIRS } from "@/lib/storage/config";
+import { getStorageStats } from "@/lib/vaultStorage/statsCache";
 
 export const dynamic = "force-dynamic";
-
-function getDirSizeBytes(dirPath: string): number {
-  if (!fs.existsSync(dirPath)) return 0;
-  let total = 0;
-  try {
-    const files = fs.readdirSync(dirPath);
-    for (const file of files) {
-      try {
-        const fullPath = path.join(dirPath, file);
-        const stat = fs.statSync(fullPath);
-        if (stat.isFile()) {
-          total += stat.size;
-        }
-      } catch {
-        // Skip unreadable files
-      }
-    }
-  } catch {
-    // Skip unreadable directories
-  }
-  return total;
-}
 
 export async function GET() {
   try {
@@ -36,7 +13,6 @@ export async function GET() {
     const cpuModel = cpus[0]?.model || "Intel Host Processor";
     const cpuCores = cpus.length || 4;
     const loadAvg = os.loadavg(); // [1m, 5m, 15m]
-    // Approximate CPU load percentage from 1-min load average normalized by core count
     const cpuPercent = Math.min(100, Math.max(1, Math.round((loadAvg[0] / Math.max(1, cpuCores)) * 100)));
 
     const totalMem = os.totalmem();
@@ -53,54 +29,24 @@ export async function GET() {
       ? "Apple VideoToolbox HW (Metal / VT)"
       : "Software Encoder (libx264/libvpx)";
 
-    // 2. Real Filesystem Storage Pool (Statfs)
-    let poolTotalBytes = 4 * 1024 * 1024 * 1024 * 1024; // 4 TB default fallback
-    let poolFreeBytes = 3.2 * 1024 * 1024 * 1024 * 1024;
-    let poolAvailableBytes = poolFreeBytes;
-    let poolUsedBytes = poolTotalBytes - poolFreeBytes;
-    let poolUsedPercent = 20;
-
-    try {
-      if (typeof (fs as any).statfsSync === "function" && fs.existsSync(STORAGE_ROOT)) {
-        const statfs = (fs as any).statfsSync(STORAGE_ROOT);
-        const bsize = BigInt(statfs.bsize);
-        poolTotalBytes = Number(BigInt(statfs.blocks) * bsize);
-        poolFreeBytes = Number(BigInt(statfs.bfree) * bsize);
-        poolAvailableBytes = Number(BigInt(statfs.bavail) * bsize);
-        poolUsedBytes = poolTotalBytes - poolFreeBytes;
-        poolUsedPercent = Math.min(100, Math.max(0, Math.round((poolUsedBytes / poolTotalBytes) * 100)));
-      }
-    } catch {
-      // Fall back to defaults if statfs is unavailable
-    }
-
-    // 3. Database Statistics
-    const [
-      totalClips,
-      trashClips,
-      favoriteClips,
-      statusGroups,
-      clips,
-      lastScanSetting,
-    ] = await Promise.all([
-      prisma.clip.count({ where: { isTrash: false } }),
+    // 2. Centralized Real Linux Storage Stats & Database Counts
+    const [storageStats, totalTrash, favoriteClips, statusGroups, lastScanSetting, activeClips] = await Promise.all([
+      getStorageStats(),
       prisma.clip.count({ where: { isTrash: true } }),
       prisma.clip.count({ where: { isFavorite: true, isTrash: false } }),
       prisma.clip.groupBy({
         by: ["status"],
         _count: { id: true },
       }),
+      prisma.setting.findUnique({ where: { key: "last_integrity_scan" } }).catch(() => null),
       prisma.clip.findMany({
         where: { isTrash: false },
-        select: { fileSize: true, duration: true },
+        select: { duration: true },
       }),
-      prisma.setting.findUnique({ where: { key: "last_integrity_scan" } }).catch(() => null),
     ]);
 
-    let totalOriginalBytes = BigInt(0);
     let totalDurationSec = 0;
-    for (const c of clips) {
-      totalOriginalBytes += c.fileSize;
+    for (const c of activeClips) {
       totalDurationSec += c.duration;
     }
 
@@ -123,15 +69,6 @@ export async function GET() {
       statusCounts.ANALYZING +
       statusCounts.GENERATING_PREVIEWS;
 
-    // 4. Derived storage on-disk measurement
-    const thumbBytes = getDirSizeBytes(STORAGE_DIRS.THUMBNAILS);
-    const storyboardBytes = getDirSizeBytes(STORAGE_DIRS.STORYBOARDS);
-    const previewBytes = getDirSizeBytes(STORAGE_DIRS.PREVIEWS);
-    const trimmedClipBytes = getDirSizeBytes(STORAGE_DIRS.CLIPS);
-    const totalDerivedBytes = thumbBytes + storyboardBytes + previewBytes + trimmedClipBytes;
-
-    const originalsBytesNum = Number(totalOriginalBytes);
-
     return NextResponse.json({
       success: true,
       timestamp: new Date().toISOString(),
@@ -153,23 +90,26 @@ export async function GET() {
         hasQuickSync: hasQuickSyncLinux,
       },
       storage: {
-        poolTotalBytes,
-        poolUsedBytes,
-        poolFreeBytes,
-        poolAvailableBytes,
-        poolUsedPercent,
-        originalsBytes: originalsBytesNum,
-        derivedBytes: totalDerivedBytes,
-        thumbnailsBytes: thumbBytes,
-        storyboardsBytes: storyboardBytes,
-        previewsBytes: previewBytes,
-        trimmedClipsBytes: trimmedClipBytes,
+        poolTotalBytes: storageStats.poolTotalBytes,
+        poolUsedBytes: storageStats.poolUsedBytes,
+        poolFreeBytes: storageStats.poolAvailableBytes, // Guaranteed 100% consistent available space across all components
+        poolAvailableBytes: storageStats.poolAvailableBytes,
+        poolUsedPercent: storageStats.poolUsedPercent,
+        rawUsedPercent: storageStats.rawUsedPercent,
+        originalsBytes: storageStats.originalsBytes,
+        derivedBytes: storageStats.derivedBytes,
+        thumbnailsBytes: storageStats.thumbnailsBytes,
+        storyboardsBytes: storageStats.storyboardsBytes,
+        previewsBytes: storageStats.previewsBytes,
+        trimmedClipsBytes: storageStats.trimmedClipsBytes,
+        appStorageBytes: storageStats.appStorageBytes,
+        otherHostBytes: storageStats.otherHostBytes,
         immutableOriginalsProtected: true,
         lastIntegrityScan: lastScanSetting?.value || null,
       },
       pipeline: {
-        totalClips,
-        trashClips,
+        totalClips: storageStats.totalClips,
+        trashClips: totalTrash,
         favoriteClips,
         totalDurationSec,
         activeProcessingCount,

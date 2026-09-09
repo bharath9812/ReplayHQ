@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { STORAGE_ROOT, ensureStorageDirectories } from "@/lib/storage/config";
+import { STORAGE_ROOT, ensureStorageDirectories } from "@/lib/vaultStorage/config";
 import fs from "fs";
 import path from "path";
 

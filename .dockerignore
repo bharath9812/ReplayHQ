@@ -1,7 +1,7 @@
-db-data
-db-data/**
-storage
-storage/**
+/db-data
+/db-data/**
+/storage
+/storage/**
 node_modules
 .next
 .git

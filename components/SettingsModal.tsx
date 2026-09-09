@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 
 interface GameProfile {
   id: string;
@@ -288,10 +288,14 @@ export function SettingsModal({
     return true;
   });
 
-  const unusedGamesCount = games.filter((g) => (g.clipCount || 0) === 0).length;
-  const usedGamesCount = games.filter((g) => (g.clipCount || 0) > 0).length;
+  const realGames = useMemo(
+    () => games.filter((g) => g.id !== "uncategorized" && g.slug !== "uncategorized"),
+    [games]
+  );
+  const unusedGamesCount = realGames.filter((g) => (g.clipCount || 0) === 0).length;
+  const usedGamesCount = realGames.filter((g) => (g.clipCount || 0) > 0).length;
 
-  const filteredGames = games.filter((g) => {
+  const filteredGames = realGames.filter((g) => {
     const matchesSearch =
       !gameSearch.trim() ||
       g.name.toLowerCase().includes(gameSearch.toLowerCase().trim()) ||
@@ -592,7 +596,7 @@ export function SettingsModal({
                         gameFilter === "all" ? "bg-primary text-on-primary font-semibold" : "text-outline hover:text-on-surface"
                       }`}
                     >
-                      All ({games.length})
+                      All ({realGames.length})
                     </button>
                     <button
                       onClick={() => setGameFilter("used")}
