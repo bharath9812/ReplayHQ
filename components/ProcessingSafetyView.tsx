@@ -476,16 +476,16 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
               <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-500"></span>
             </span>
             <span className="font-mono text-xs uppercase font-bold tracking-wider text-emerald-400">
-              Vault Core Daemon Online
+              System Operational
             </span>
             <span className="text-zinc-500 text-xs">•</span>
             <span className="font-mono text-xs text-zinc-400">
-              Live Polling ({autoRefresh ? "Active" : "Paused"})
+              Live Sync ({autoRefresh ? "Active" : "Paused"})
             </span>
           </div>
 
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-white flex items-center gap-3">
-            Processing &amp; Storage Safety
+            Storage &amp; System Health
             {actionInProgress && (
               <span className="text-xs font-mono font-normal px-2.5 py-1 rounded-full bg-primary/20 text-primary border border-primary/30 animate-pulse">
                 Processing Active Task...
@@ -494,11 +494,11 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
           </h1>
 
           <div className="flex items-center gap-2 flex-wrap text-xs font-mono text-zinc-400">
-            <span>Host: {host?.hostname || "Debian Linux"} ({host?.cpuModel?.slice(0, 24) || "Core Host"})</span>
+            <span>Server: {host?.hostname || "Debian Linux"} ({host?.cpuModel?.slice(0, 24) || "Core Host"})</span>
             <span>•</span>
             <span>Uptime: {host ? formatUptime(host.uptimeSec) : "--"}</span>
             <span>•</span>
-            <span className="text-primary font-semibold">{totalClipsCount} Master Files Protected</span>
+            <span className="text-primary font-semibold">{totalClipsCount} Videos Protected</span>
           </div>
         </div>
 
@@ -535,12 +535,12 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
 
           <div className="flex items-center gap-1.5 font-mono text-xs text-emerald-400 bg-surface-container-low px-3 py-1.5 rounded-lg border border-outline-variant/30">
             <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-            <span>Storage Read-Only Mount Active</span>
+            <span>Write-Protection Active</span>
           </div>
         </div>
       </div>
 
-      {/* File Protection Enclave Banner (Moved from library homepage) */}
+      {/* File Protection Banner */}
       <div className="w-full bg-[#101318] rounded-xl px-4 py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-md border border-white/10">
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center shrink-0">
@@ -548,17 +548,13 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
               verified_user
             </span>
           </div>
-          <p className="font-mono text-xs text-zinc-300 leading-relaxed">
-            <strong className="font-semibold text-white">File Protection Active</strong> — Source videos are mounted read-only on{" "}
-            <code className="bg-white/10 px-1.5 py-0.5 rounded text-sky-300 font-mono text-[11px]">
-              /data/storage/originals
-            </code>
-            . Thumbnails, 320x180 scrubbing caches, and metadata edits never touch the original containers.
+          <p className="text-xs text-zinc-300 leading-relaxed font-sans">
+            <strong className="font-semibold text-white">Original Videos Protected</strong> — Master gameplay files are write-protected and preserved in native recording quality. Thumbnails, scrubbing previews, and highlights are stored separately.
           </p>
         </div>
         <div className="flex items-center gap-2 text-zinc-400 shrink-0 font-mono text-xs self-end sm:self-auto bg-white/5 px-2.5 py-1 rounded-lg border border-white/10">
           <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-          <span className="text-emerald-300 font-medium">Safe Mode Active</span>
+          <span className="text-emerald-300 font-medium">Protected</span>
         </div>
       </div>
 
@@ -608,17 +604,17 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
         </div>
       )}
 
-      {/* Top 3 Pro Metric Cards Grid */}
+      {/* Top 3 Metric Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
         {/* Card 1: Storage Pool */}
         <div className="bg-[#101318] rounded-2xl p-5 flex flex-col justify-between shadow-lg border border-white/10 space-y-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="material-symbols-outlined text-sky-400 text-[20px]">database</span>
-              <span className="text-white font-semibold text-base">Storage Pool</span>
+              <span className="text-white font-semibold text-base">Storage Space</span>
             </div>
             <span className="font-mono text-xs text-zinc-400 bg-white/5 px-2.5 py-1 rounded-md border border-white/10">
-              Direct Host Pool
+              Host Storage
             </span>
           </div>
 
@@ -663,19 +659,19 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
               </div>
               <div className="flex flex-col">
                 <span className="text-zinc-400 text-[11px] flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>Scrub & Thumbs
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>Previews &amp; Thumbs
                 </span>
                 <span className="text-white font-medium">{formatBytes(totalDerivedBytes)}</span>
               </div>
               <div className="flex flex-col">
                 <span className="text-zinc-400 text-[11px] flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block shadow-sm"></span>Other Host Data
+                  <span className="w-2 h-2 rounded-full bg-indigo-500 inline-block shadow-sm"></span>Other Files
                 </span>
                 <span className="text-indigo-400 font-medium">{formatBytes(otherHostBytes)}</span>
               </div>
               <div className="flex flex-col">
                 <span className="text-zinc-400 text-[11px] flex items-center gap-1.5">
-                  <span className="w-2 h-2 rounded-full bg-emerald-400/40 inline-block border border-emerald-400"></span>Available Free
+                  <span className="w-2 h-2 rounded-full bg-emerald-400/40 inline-block border border-emerald-400"></span>Free Space
                 </span>
                 <span className="text-emerald-400 font-medium">{formatBytes(poolAvailableBytes)}</span>
               </div>
@@ -687,7 +683,7 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
               <span className="material-symbols-outlined text-[16px] text-emerald-400">check_circle</span>
               Integrity Status
             </span>
-            <span className="text-emerald-400 font-semibold">100% Cryptographic Match</span>
+            <span className="text-emerald-400 font-semibold">All Clips Verified</span>
           </div>
         </div>
 
@@ -699,7 +695,7 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
               <span className="text-white font-semibold text-base">Host Workload</span>
             </div>
             <span className="font-mono text-xs text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-full border border-emerald-500/20">
-              {host && host.cpuPercent > 80 ? "High Load" : "Calm Profile"}
+              {host && host.cpuPercent > 80 ? "High Load" : "Normal Load"}
             </span>
           </div>
 
@@ -770,31 +766,31 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
           </div>
 
           <div className="flex items-center justify-between text-zinc-400 font-mono text-xs pt-1 border-t border-white/5">
-            <span>Decoder Pipeline:</span>
+            <span>Hardware Transcoder:</span>
             <span className="text-white font-medium truncate max-w-[200px]">
-              {host?.hardwareTranscoder || "QSV Accelerated"}
+              {host?.hasQuickSync ? "Intel QuickSync Accelerated" : "Hardware Accelerated"}
             </span>
           </div>
         </div>
 
-        {/* Card 3: Original Vault Guard */}
+        {/* Card 3: Original Video Guard */}
         <div className="bg-[#101318] rounded-2xl p-5 flex flex-col justify-between shadow-lg border border-white/10 space-y-4 relative overflow-hidden">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <span className="material-symbols-outlined text-emerald-400 text-[20px]">lock_clock</span>
-              <span className="text-white font-semibold text-base">Original Vault Guard</span>
+              <span className="material-symbols-outlined text-emerald-400 text-[20px]">verified_user</span>
+              <span className="text-white font-semibold text-base">Original Video Guard</span>
             </div>
             <span className="font-mono text-xs text-emerald-400 bg-emerald-500/15 px-2.5 py-1 rounded-full font-semibold border border-emerald-500/30">
-              Kernel-Locked
+              Protected
             </span>
           </div>
 
           <div className="flex flex-col gap-1.5">
             <span className="text-white font-semibold text-sm tracking-tight">
-              Immutable Zero-Corruption Policy
+              Zero Data Loss Protection
             </span>
-            <p className="font-mono text-xs text-zinc-400 leading-relaxed">
-              Master originals are permanently write-locked. Thumbnails, 320x180 storyboard sheets, and proxies reside in derived storage.
+            <p className="text-xs text-zinc-400 leading-relaxed font-sans">
+              Master originals are permanently write-protected. Previews and edits never alter the original video container.
             </p>
           </div>
 
@@ -804,12 +800,12 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
               onClick={() => handleVerify("quick")}
               disabled={isVerifying}
               className="flex-1 px-3 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/15 text-white font-mono text-xs transition-colors flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-50 active:scale-95 shadow-sm"
-              title="Verify existence and byte-size match for all master files"
+              title="Verify existence and file size match for all master files"
             >
               <span className={`material-symbols-outlined text-[16px] text-sky-400 ${isVerifying && verifyMode === "quick" ? "animate-spin" : ""}`}>
                 {isVerifying && verifyMode === "quick" ? "sync" : "rule"}
               </span>
-              <span>{isVerifying && verifyMode === "quick" ? "Auditing..." : "Quick Audit"}</span>
+              <span>{isVerifying && verifyMode === "quick" ? "Scanning..." : "Scan Files"}</span>
             </button>
 
             <button
@@ -827,13 +823,13 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
         </div>
       </div>
 
-      {/* Active Processing Pipeline Queue */}
+      {/* Media Processing Queue */}
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between px-1">
           <div className="flex items-center gap-2.5">
-            <span className="text-white font-semibold text-lg">Active Processing Pipeline</span>
+            <span className="text-white font-semibold text-lg">Media Processing Queue</span>
             <span className="font-mono text-xs bg-white/5 px-2.5 py-1 rounded-md text-zinc-300 border border-white/10">
-              {activeTasks.length} active • {pipelineSummary?.totalClips ?? totalClipsCount} total indexed
+              {activeTasks.length} active • {pipelineSummary?.totalClips ?? totalClipsCount} indexed
             </span>
           </div>
 
@@ -842,21 +838,21 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
               onClick={handleRegenerateAllThumbnails}
               disabled={actionInProgress !== null}
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary/15 hover:bg-primary/25 text-primary border border-primary/30 transition-colors cursor-pointer disabled:opacity-50"
-              title="Regenerate ultra-sharp 1440p/4K Lanczos WebP thumbnails (quality 92) for all clips in vault"
+              title="Regenerate high quality thumbnails for all clips in vault"
             >
               <span className={`material-symbols-outlined text-[15px] ${actionInProgress === "regen_thumbnails" ? "animate-spin" : ""}`}>
                 {actionInProgress === "regen_thumbnails" ? "progress_activity" : "high_quality"}
               </span>
-              <span>{actionInProgress === "regen_thumbnails" ? "Regenerating HD..." : "Regenerate HD Posters"}</span>
+              <span>{actionInProgress === "regen_thumbnails" ? "Regenerating..." : "Regenerate Thumbnails"}</span>
             </button>
             <button
               onClick={handleReprocessAllMissing}
               disabled={actionInProgress !== null}
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-white/5 hover:bg-white/10 text-zinc-300 hover:text-white border border-white/10 transition-colors cursor-pointer disabled:opacity-50"
-              title="Generate 320x180 storyboard sprites for any clip that lacks them"
+              title="Generate scrubbing previews for any clip that lacks them"
             >
               <span className="material-symbols-outlined text-[15px] text-emerald-400">auto_awesome</span>
-              <span>Backfill Missing Storyboards</span>
+              <span>Generate Missing Previews</span>
             </button>
           </div>
         </div>
@@ -885,7 +881,7 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
                     </div>
                     <span className="font-mono text-xs text-zinc-400 mt-1 flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full bg-primary animate-pulse"></span>
-                      Generating high-definition 320x180 sprite sheet &amp; WebVTT timeline preview
+                      Generating preview sprite sheet &amp; timeline scrubbing
                     </span>
                   </div>
                 </div>
@@ -896,7 +892,7 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
                       <div className="h-full bg-primary animate-pulse w-[65%]"></div>
                     </div>
                     <div className="flex justify-between text-[10px] text-zinc-400 font-mono">
-                      <span>Transcoding</span>
+                      <span>Processing</span>
                       <span>Active</span>
                     </div>
                   </div>
@@ -911,9 +907,9 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
                   <span className="material-symbols-outlined text-[24px]">task_alt</span>
                 </div>
                 <div className="flex flex-col">
-                  <span className="text-white font-semibold text-sm">Pipeline Queue Idle &amp; Clean</span>
-                  <span className="font-mono text-xs text-zinc-400">
-                    All {totalClipsCount} master files have thumbnails and timeline scrub preview sheets ready.
+                  <span className="text-white font-semibold text-sm">Processing Queue Idle</span>
+                  <span className="text-xs text-zinc-400 mt-0.5 font-sans">
+                    All {totalClipsCount} gameplay videos have preview thumbnails and scrubbing sheets ready.
                   </span>
                 </div>
               </div>
@@ -923,20 +919,20 @@ export function ProcessingSafetyView({ stats: initialStats, onRefreshStats }: Pr
                   onClick={handleRegenerateAllThumbnails}
                   disabled={actionInProgress !== null}
                   className="px-3.5 py-2 rounded-xl bg-primary/15 hover:bg-primary/25 border border-primary/30 text-primary font-mono text-xs transition-colors flex items-center gap-1.5 shrink-0 cursor-pointer disabled:opacity-50"
-                  title="Re-extract all clip thumbnails with 92% WebP quality and Lanczos QHD scaling"
+                  title="Re-extract all clip thumbnails"
                 >
                   <span className={`material-symbols-outlined text-[16px] ${actionInProgress === "regen_thumbnails" ? "animate-spin" : ""}`}>
                     {actionInProgress === "regen_thumbnails" ? "progress_activity" : "high_quality"}
                   </span>
-                  <span>{actionInProgress === "regen_thumbnails" ? "Regenerating..." : "Regenerate All HD Posters"}</span>
+                  <span>{actionInProgress === "regen_thumbnails" ? "Regenerating..." : "Regenerate Thumbnails"}</span>
                 </button>
                 <button
                   onClick={handleReprocessAllMissing}
                   disabled={actionInProgress !== null}
                   className="px-3.5 py-2 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-zinc-200 font-mono text-xs transition-colors flex items-center gap-2 shrink-0 cursor-pointer"
                 >
-                  <span className="material-symbols-outlined text-[16px] text-sky-400">verified</span>
-                  <span>Audit &amp; Backfill Previews</span>
+                  <span className="material-symbols-outlined text-[16px] text-sky-400">auto_awesome</span>
+                  <span>Generate Missing Previews</span>
                 </button>
               </div>
             </div>

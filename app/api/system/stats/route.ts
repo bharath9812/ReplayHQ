@@ -69,12 +69,26 @@ export async function GET() {
       statusCounts.ANALYZING +
       statusCounts.GENERATING_PREVIEWS;
 
+    const serverPort = process.env.PORT || "3845";
+    let primaryIp = null;
+    const ifaces = os.networkInterfaces();
+    for (const name of Object.keys(ifaces)) {
+      for (const net of ifaces[name] || []) {
+        if (net.family === "IPv4" && !net.internal) {
+          primaryIp = net.address;
+          break;
+        }
+      }
+      if (primaryIp) break;
+    }
+
     return NextResponse.json({
       success: true,
       timestamp: new Date().toISOString(),
       host: {
         hostname: os.hostname(),
         platform: os.platform(),
+        osType: os.type(),
         release: os.release(),
         uptimeSec: Math.round(os.uptime()),
         processUptimeSec: Math.round(process.uptime()),
@@ -88,6 +102,8 @@ export async function GET() {
         memPercent,
         hardwareTranscoder,
         hasQuickSync: hasQuickSyncLinux,
+        port: serverPort,
+        ip: primaryIp,
       },
       storage: {
         poolTotalBytes: storageStats.poolTotalBytes,

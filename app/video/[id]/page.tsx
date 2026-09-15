@@ -62,10 +62,7 @@ export default function VideoDetailPage() {
           </div>
           <div className="flex flex-col items-center gap-1 text-center">
             <span className="font-semibold text-sm tracking-tight text-white">
-              Accessing Immutable Vault
-            </span>
-            <span className="text-xs text-zinc-500 font-mono">
-              Verifying stream buffer on port 3845...
+              Loading Video...
             </span>
           </div>
         </div>
@@ -80,14 +77,14 @@ export default function VideoDetailPage() {
           <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/30 text-red-400 flex items-center justify-center mb-3">
             <span className="material-symbols-outlined text-2xl">error</span>
           </div>
-          <h2 className="text-base font-semibold text-white mb-1">Vault Asset Unavailable</h2>
-          <p className="text-xs text-zinc-400 mb-6">{error || "Footage asset could not be loaded."}</p>
+          <h2 className="text-base font-semibold text-white mb-1">Video Unavailable</h2>
+          <p className="text-xs text-zinc-400 mb-6">{error || "This video could not be loaded."}</p>
           <button
             onClick={() => router.push("/")}
             className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary text-on-primary text-xs font-semibold hover:brightness-110 active:scale-95 transition-all cursor-pointer shadow-md"
           >
             <span className="material-symbols-outlined text-[18px]">arrow_back</span>
-            <span>Return to Vault Library</span>
+            <span>Return to Library</span>
           </button>
         </div>
       </div>

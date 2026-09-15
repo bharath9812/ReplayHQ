@@ -3,9 +3,8 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "GameVault - Apple Pro Gaming Footage Vault & Studio",
-  description:
-    "High-Performance Self-Hosted SaaS for iPad & Gaming Footage with Thumbnail-Based Timeline Scrubbing and Zero-Corruption Architecture.",
+  title: "GameVault - Gameplay Video Library",
+  description: "A fast, modern library for your gaming videos and clips.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

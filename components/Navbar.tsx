@@ -57,23 +57,17 @@ export function Navbar({
             <line x1="9" y1="3" x2="9" y2="21" />
           </svg>
         </button>
-
-        {/* Immutable Vault Pill */}
-        <div className="flex items-center gap-space-xs font-label-code-sm text-label-code-sm text-secondary bg-surface-container px-2.5 py-1 rounded-lg border border-outline-variant/30 shadow-xs">
-          <span className="material-symbols-outlined text-[14px]">shield</span>
-          <span className="truncate max-w-[140px] sm:max-w-none font-semibold">Immutable Vault • Safe</span>
-        </div>
       </div>
 
       {/* Center: Search input */}
-      <div className="flex-1 max-w-md mx-space-sm md:mx-space-lg">
-        <div className="flex items-center gap-space-xs bg-surface-container px-space-md py-1 rounded-lg border border-outline-variant/30 focus-within:border-primary/60 transition-colors">
-          <span className="material-symbols-outlined text-outline text-[16px]">search</span>
+      <div className="flex-1 max-w-md mx-1 sm:mx-space-sm md:mx-space-lg min-w-0">
+        <div className="flex items-center gap-space-xs bg-surface-container px-2.5 sm:px-space-md py-1 rounded-lg border border-outline-variant/30 focus-within:border-primary/60 transition-colors">
+          <span className="material-symbols-outlined text-outline text-[16px] shrink-0">search</span>
           <input
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
-            className="w-full bg-transparent border-none outline-none font-body-sm text-body-sm text-on-surface placeholder:text-outline"
-            placeholder="Search clips, codecs, fps... (⌘K)"
+            className="w-full min-w-0 bg-transparent border-none outline-none font-body-sm text-body-sm text-on-surface placeholder:text-outline"
+            placeholder="Search clips, games, tags... (⌘K)"
             type="text"
           />
           {searchQuery ? (

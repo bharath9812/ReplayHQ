@@ -141,7 +141,7 @@ function createFallbackThumbnail(fileName: string, fileSize?: number): string {
 
     <!-- Filename & Subtitle -->
     <text x="160" y="132" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif" font-size="11" font-weight="600" fill="#f3f4f6" text-anchor="middle">${safeName}</text>
-    <text x="160" y="150" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif" font-size="9" font-weight="500" fill="#6b7280" text-anchor="middle" letter-spacing="0.3">Direct Master Ingest • Server QuickSync Ready</text>
+    <text x="160" y="150" font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif" font-size="9" font-weight="500" fill="#6b7280" text-anchor="middle" letter-spacing="0.3">Gameplay Video • Ready</text>
   </svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
@@ -1397,9 +1397,9 @@ export function UploadModal({
             )}
             <span className="font-semibold text-xs text-on-surface truncate font-mono">
               {isProcessing
-                ? `Processing Clip ${activeUploadIndex + 1}/${batchStats.totalCount} on Server`
+                ? `Processing Clip ${activeUploadIndex + 1}/${batchStats.totalCount}`
                 : isUploading
-                ? `Ingesting Clip ${activeUploadIndex + 1}/${batchStats.totalCount} (${batchStats.overallProgress}%)`
+                ? `Uploading Clip ${activeUploadIndex + 1}/${batchStats.totalCount} (${batchStats.overallProgress}%)`
                 : `Staged Queue (${batchStats.totalCount} clips)`}
             </span>
           </div>
@@ -1486,12 +1486,9 @@ export function UploadModal({
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="font-semibold text-sm text-on-surface">Import Gameplay Footage</h2>
-                <span className="px-2 py-0.5 rounded-full bg-surface-container text-secondary text-[10px] font-mono border border-outline-variant/30">
-                  Direct LAN Ingestion (Zero-Corruption Master)
-                </span>
               </div>
-              <p className="text-xs text-outline font-mono mt-0.5">
-                Target: /data/storage/originals/ • Port 3845 • Multi-Select Ready
+              <p className="text-xs text-outline mt-0.5">
+                Select or drag gameplay videos to add to your library
               </p>
             </div>
           </div>
@@ -1526,7 +1523,7 @@ export function UploadModal({
                   ? "bg-primary/20 border-primary/40 text-primary"
                   : "text-outline hover:text-on-surface hover:bg-surface-container border-outline-variant/30"
               }`}
-              title="View Ingest & Upload History"
+              title="View Upload History"
             >
               <span className="material-symbols-outlined text-[16px]">history</span>
               <span className="hidden sm:inline">History</span>
@@ -1569,9 +1566,9 @@ export function UploadModal({
                     <span className="material-symbols-outlined text-[18px]">history</span>
                   </div>
                   <div>
-                    <h3 className="text-sm font-semibold text-on-surface">Ingest &amp; Upload History</h3>
+                    <h3 className="text-sm font-semibold text-on-surface">Upload History</h3>
                     <p className="text-[11px] text-outline font-mono">
-                      Persistent audit log of transfers, performance stats, and file integrity
+                      Recent uploads and completed video transfers
                     </p>
                   </div>
                 </div>
@@ -1617,9 +1614,9 @@ export function UploadModal({
               {ingestHistory.length === 0 ? (
                 <div className="py-16 text-center text-outline font-mono text-xs space-y-2">
                   <span className="material-symbols-outlined text-[40px] text-outline/40 block">history_toggle_off</span>
-                  <p className="text-zinc-300 font-semibold text-sm">No Ingest Records Logged Yet</p>
+                  <p className="text-zinc-300 font-semibold text-sm">No Uploads Yet</p>
                   <p className="text-[11px] text-zinc-500 max-w-sm mx-auto">
-                    Uploaded clips, deduplicated vault files, and transfer failures will be logged here with complete speed breakdowns and SHA-256 hashes.
+                    Completed video uploads and transfers will appear here.
                   </p>
                 </div>
               ) : (
@@ -1699,7 +1696,7 @@ export function UploadModal({
                           </span>
                         </div>
                         <div className="p-2 rounded-lg bg-surface-container-lowest border border-outline-variant/20">
-                          <span className="text-[10px] text-outline block">Total Ingest Time</span>
+                          <span className="text-[10px] text-outline block">Total Time</span>
                           <span className="text-secondary font-semibold text-[11px]">
                             {formatSeconds(hist.totalDurationSeconds)}
                           </span>
@@ -1714,7 +1711,7 @@ export function UploadModal({
                       )}
 
                       <div className="flex items-center justify-between text-[10px] text-zinc-500 pt-1 border-t border-outline-variant/20">
-                        <span>Ingested: {new Date(hist.completedAt).toLocaleString()}</span>
+                        <span>Uploaded: {new Date(hist.completedAt).toLocaleString()}</span>
                         {hist.sha256 && (
                           <div className="flex items-center gap-1 font-mono text-zinc-400">
                             <span className="text-zinc-500 font-semibold">SHA-256:</span>
@@ -1797,10 +1794,10 @@ export function UploadModal({
               <span className="material-symbols-outlined text-[22px]">add_photo_alternate</span>
             </div>
             <p className="text-xs font-semibold text-on-surface">
-              Drop iPad screen recordings or click to multi-select
+              Drop gameplay videos here or click to browse
             </p>
             <p className="text-[11px] text-outline mt-0.5 font-mono">
-              Supports multiple 4K/60fps HEVC, ProRes, MP4, MOV up to 100GB
+              Supports 4K, 60fps, MP4, MOV, MKV, and WebM
             </p>
           </div>
 
@@ -1967,8 +1964,8 @@ export function UploadModal({
                           className="w-28 h-18 sm:w-36 sm:h-22.5 rounded-xl overflow-hidden bg-black/80 border border-outline-variant/50 shrink-0 relative flex items-center justify-center shadow-md cursor-pointer group hover:border-primary/80 transition-all select-none"
                           title={
                             item.file.size > 100 * 1024 * 1024 || item.file.name.toLowerCase().endsWith(".mkv")
-                              ? "Original master footage is preserved untouched. 4K streaming proxies are generated upon server ingest."
-                              : "Click to Preview Clip in Full Resolution"
+                              ? "Preview available after upload"
+                              : "Click to Preview Clip"
                           }
                         >
                           {item.thumbnailUrl ? (
@@ -2244,8 +2241,8 @@ export function UploadModal({
                               <span className="material-symbols-outlined text-[16px]">check_circle</span>
                               <span>
                                 {item.status === "duplicate"
-                                  ? "Deduplicated Ingest Complete (Master Bit-for-Bit Verified)"
-                                  : "Master File Stored Safely (Zero-Corruption Verified)"}
+                                  ? "Upload Complete (File Already in Vault)"
+                                  : "Upload Complete • Video Saved Safely"}
                               </span>
                             </div>
                             <span className="text-[10px] text-zinc-400">
@@ -2276,7 +2273,7 @@ export function UploadModal({
                               </span>
                             </div>
                             <div className="p-2 rounded-lg bg-surface-container-lowest/80 border border-outline-variant/20">
-                              <span className="text-[10px] text-outline block">Peak LAN Speed</span>
+                              <span className="text-[10px] text-outline block">Peak Speed</span>
                               <span className="text-secondary font-semibold text-[11px]">
                                 {item.peakSpeed && item.peakSpeed > 0
                                   ? `${(item.peakSpeed / (1024 * 1024)).toFixed(1)} MB/s`
@@ -2285,17 +2282,17 @@ export function UploadModal({
                             </div>
                           </div>
 
-                          {/* SHA-256 Checksum display */}
+                          {/* Integrity indicator */}
                           {item.sha256 && (
                             <div className="flex items-center justify-between gap-2 pt-1 border-t border-outline-variant/20 text-[10px] text-zinc-400">
                               <div className="flex items-center gap-1 min-w-0">
-                                <span className="text-zinc-500 font-semibold shrink-0">SHA-256:</span>
-                                <span className="font-mono text-zinc-300 truncate" title={item.sha256}>
-                                  {item.sha256}
+                                <span className="text-emerald-400 flex items-center gap-1 font-semibold">
+                                  <span className="material-symbols-outlined text-[14px]">check_circle</span>
+                                  File Integrity Verified
                                 </span>
                               </div>
                               <span className="text-[9px] px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 shrink-0">
-                                0o440 Immutable
+                                Protected
                               </span>
                             </div>
                           )}
@@ -2496,7 +2493,7 @@ export function UploadModal({
                           <div className="space-y-2">
                             <div className="flex items-center justify-between">
                               <label className="text-[11px] text-outline font-mono">
-                                🏷️ Tags &amp; Taxonomies
+                                🏷️ Clip Tags
                               </label>
                               {availableTags.length > 0 && (
                                 <span className="text-[10px] text-zinc-500 font-mono">
@@ -2658,7 +2655,7 @@ export function UploadModal({
                   <span className="font-semibold text-on-surface uppercase tracking-wider">
                     {currentUploadingItem?.status === "processing"
                       ? `Server Processing Clip ${activeUploadIndex + 1} of ${stagedFiles.length}`
-                      : `Ingesting Clip ${activeUploadIndex + 1} of ${stagedFiles.length}`}
+                      : `Uploading Clip ${activeUploadIndex + 1} of ${stagedFiles.length}`}
                   </span>
                 </div>
                 <div className="flex items-center gap-3 text-xs text-outline">
@@ -2727,14 +2724,14 @@ export function UploadModal({
                           <span className="material-symbols-outlined text-[18px] animate-spin">
                             progress_activity
                           </span>
-                          <span className="text-sm font-semibold">Host ffmpeg Processing (Disk Master Written)</span>
+                          <span className="text-sm font-semibold">Processing Video...</span>
                         </div>
                       ) : (
                         <>
                           <span className="text-xl font-bold text-on-surface tracking-tight">
                             {(currentSpeed / (1024 * 1024)).toFixed(1)}
                           </span>
-                          <span className="text-outline ml-1">MB/s Direct LAN</span>
+                          <span className="text-outline ml-1">MB/s</span>
                         </>
                       )}
                     </div>
@@ -2840,12 +2837,12 @@ export function UploadModal({
             ) : isUploading ? (
               <span className="text-primary flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-                Ingesting {activeUploadIndex + 1} of {batchStats.totalCount} (
+                Uploading {activeUploadIndex + 1} of {batchStats.totalCount} (
                 {batchStats.completedCount} finished)...
               </span>
             ) : (
               <span>
-                Ready to ingest {stagedFiles.length} file{stagedFiles.length > 1 ? "s" : ""}
+                Ready to upload {stagedFiles.length} file{stagedFiles.length > 1 ? "s" : ""}
               </span>
             )}
           </div>
@@ -2863,7 +2860,7 @@ export function UploadModal({
                   onClick={handleCancelAll}
                   className="px-3.5 py-1.5 rounded-lg bg-error-container/30 border border-error/40 text-error hover:bg-error-container/50 text-xs font-medium cursor-pointer transition-colors"
                 >
-                  Cancel Ingest
+                  Cancel Upload
                 </button>
               </>
             ) : (
@@ -2873,7 +2870,7 @@ export function UploadModal({
                   className="px-5 py-2 rounded-xl font-medium text-xs text-on-primary bg-primary hover:brightness-105 active:scale-98 transition-all shadow-md cursor-pointer flex items-center gap-1.5"
                 >
                   <span className="material-symbols-outlined text-[16px]">publish</span>
-                  <span>Start Archival Ingest ({stagedFiles.length})</span>
+                  <span>Start Upload ({stagedFiles.length})</span>
                 </button>
               )
             )}
@@ -2895,7 +2892,7 @@ export function UploadModal({
                     {previewLightboxFile.title}
                   </h3>
                   <p className="text-[10px] text-outline font-mono">
-                    {previewLightboxFile.file.name} • {formatBytes(previewLightboxFile.file.size)} • High-Resolution Ingest Inspection
+                    {previewLightboxFile.file.name} • {formatBytes(previewLightboxFile.file.size)}
                   </p>
                 </div>
               </div>

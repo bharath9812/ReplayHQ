@@ -982,13 +982,13 @@ export default function DashboardPage() {
             <div className="py-6 flex flex-col gap-5 max-w-5xl mx-auto">
               <div className="flex items-center justify-between border-b border-outline-variant/30 pb-4">
                 <div>
-                  <h1 className="text-2xl font-bold text-white">Activity &amp; Ingest Log</h1>
-                  <span className="font-mono text-xs text-zinc-400">
-                    Live cryptographic audit trail of media ingestion, parity checks, and storyboard generation
+                  <h1 className="text-2xl font-bold text-white">Activity Log</h1>
+                  <span className="text-xs text-zinc-400 font-sans">
+                    Chronological history of media uploads, processing tasks, and integrity audits
                   </span>
                 </div>
                 <span className="font-mono text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-3 py-1 rounded-lg">
-                  Audit Verified 100%
+                  Integrity Verified
                 </span>
               </div>
 
@@ -1000,14 +1000,14 @@ export default function DashboardPage() {
                   >
                     <div className="flex items-center gap-3 min-w-0">
                       <span className="text-zinc-500 font-bold shrink-0">{String(idx + 1).padStart(2, "0")}</span>
-                      <span className="text-sky-400 font-semibold shrink-0">SHA-256 PARITY VERIFIED</span>
+                      <span className="text-sky-400 font-semibold shrink-0">VERIFIED</span>
                       <span className="text-white truncate font-medium">{clip.title}</span>
                       <span className="text-zinc-400 hidden sm:inline text-[11px]">
                         ({clip.width}x{clip.height} • {formatBytes(Number(clip.fileSize))} • {clip.codec})
                       </span>
                     </div>
                     <span className="text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 rounded text-[11px] font-semibold shrink-0">
-                      READ-ONLY MATCH
+                      PROTECTED
                     </span>
                   </div>
                 ))}
@@ -1037,15 +1037,7 @@ export default function DashboardPage() {
                       )}
                     </span>
                     <span className="font-mono text-xs text-zinc-400">
-                      {filteredClips.length} clips • {totalBytesStr} • Original Files Immutable &amp; Verified
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1.5 text-zinc-400 text-xs font-mono">
-                    <span className="material-symbols-outlined text-[16px] text-emerald-400">
-                      verified_user
-                    </span>
-                    <span className="text-zinc-300 font-medium">
-                      Host Storage • Read-Only Enclave
+                      {filteredClips.length} {filteredClips.length === 1 ? "clip" : "clips"} • {totalBytesStr}
                     </span>
                   </div>
                 </div>
@@ -1075,7 +1067,6 @@ export default function DashboardPage() {
                       </span>
                     </div>
 
-                    {/* Subfolder Dropdown Filter */}
                     {availableFolders.length > 0 && (
                       <div className="relative">
                         <select
@@ -1145,74 +1136,10 @@ export default function DashboardPage() {
                           : "All Statuses"}
                       </span>
                     </button>
-
-                    {/* Smart Folder Organizer Button */}
-                    <button
-                      onClick={() => {
-                        setFolderOrganizeGameSlug(selectedGame || undefined);
-                        setIsFolderOrganizeOpen(true);
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-mono text-xs font-semibold transition-all cursor-pointer shadow-xs active:scale-98"
-                      title="Organize clips into subfolders by date range, tag, or title keyword"
-                    >
-                      <span className="material-symbols-outlined text-[15px] text-amber-400">drive_file_move</span>
-                      <span className="hidden sm:inline">Smart Folder Tool</span>
-                    </button>
-
-                    {/* Collections Manager Tool Button */}
-                    <button
-                      onClick={() => {
-                        setCollectionManagerInitialId(null);
-                        setIsCollectionManagerOpen(true);
-                      }}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-500/10 hover:bg-blue-500/20 text-blue-400 border border-blue-500/30 font-mono text-xs font-semibold transition-all cursor-pointer shadow-xs active:scale-98"
-                      title="Open Collections Manager: Curate multi-game playlists and assign videos"
-                    >
-                      <span className="material-symbols-outlined text-[15px] text-blue-400">collections_bookmark</span>
-                      <span className="hidden sm:inline">Collections Tool</span>
-                    </button>
-
-                    {/* Manage Categories Button */}
-                    <button
-                      onClick={() => setIsSettingsOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-zinc-300 hover:text-white border border-outline-variant/30 font-mono text-xs transition-colors cursor-pointer"
-                      title="Manage Game Categories"
-                    >
-                      <span className="material-symbols-outlined text-[15px] text-primary">category</span>
-                      <span className="hidden md:inline">Categories</span>
-                    </button>
                   </div>
 
-                  {/* Mode & Scale & Import Actions */}
+                  {/* Scale & Import Actions */}
                   <div className="flex items-center gap-2.5">
-                    {/* Folder Exploration Mode Switch */}
-                    <div className="flex items-center rounded-lg bg-surface-container p-0.5 border border-outline-variant/30 text-xs font-mono shrink-0">
-                      <button
-                        onClick={() => handleSetFolderDisplayStyle("shelf")}
-                        title="Shelf View: Fast horizontal folder tabs pinned above grid"
-                        className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all cursor-pointer ${
-                          folderDisplayStyle === "shelf"
-                            ? "bg-primary text-white font-semibold shadow-xs"
-                            : "text-zinc-400 hover:text-white"
-                        }`}
-                      >
-                        <span className="material-symbols-outlined text-[14px]">view_column</span>
-                        <span className="hidden md:inline">Shelf</span>
-                      </button>
-                      <button
-                        onClick={() => handleSetFolderDisplayStyle("finder")}
-                        title="macOS Finder View: Explore folders as interactive directories"
-                        className={`flex items-center gap-1 px-2 py-1 rounded-md transition-all cursor-pointer ${
-                          folderDisplayStyle === "finder"
-                            ? "bg-amber-500 text-black font-semibold shadow-xs"
-                            : "text-zinc-400 hover:text-white"
-                        }`}
-                      >
-                        <span className="material-symbols-outlined text-[14px]">folder_special</span>
-                        <span className="hidden md:inline">Finder</span>
-                      </button>
-                    </div>
-
                     {viewMode === "grid" && (
                       <div className="hidden sm:flex items-center gap-2 font-mono text-xs text-zinc-400">
                         <span>Scale</span>
@@ -1227,14 +1154,6 @@ export default function DashboardPage() {
                         />
                       </div>
                     )}
-
-                    <button
-                      onClick={() => setIsUploadOpen(true)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary hover:bg-primary/90 text-white font-mono text-xs font-semibold transition-all shadow-sm cursor-pointer active:scale-98"
-                    >
-                      <span className="material-symbols-outlined text-[15px]">add</span>
-                      <span>Import</span>
-                    </button>
                   </div>
                 </div>
 
@@ -1288,10 +1207,10 @@ export default function DashboardPage() {
                         setIsFolderOrganizeOpen(true);
                       }}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-dashed border-amber-500/30 hover:border-amber-400/60 bg-amber-500/5 hover:bg-amber-500/10 text-amber-300/80 hover:text-amber-200 text-xs font-mono transition-all cursor-pointer shrink-0"
-                      title="Organize clips into a new folder"
+                      title="Create a new folder"
                     >
                       <span className="material-symbols-outlined text-[15px]">add_circle</span>
-                      <span>Organize / New Folder</span>
+                      <span>+ Folder</span>
                     </button>
                   </div>
                 )}
@@ -1462,7 +1381,7 @@ export default function DashboardPage() {
                           className="px-4 py-2 rounded-xl bg-surface-container hover:bg-surface-container-high border border-outline-variant/40 text-white font-medium text-xs shadow-md transition-all cursor-pointer flex items-center gap-1.5"
                         >
                           <span className="material-symbols-outlined text-[16px]">video_library</span>
-                          Browse All Vault Footage
+                          Browse All Clips
                         </button>
                       </div>
                     ) : (
@@ -1471,17 +1390,17 @@ export default function DashboardPage() {
                           <span className="material-symbols-outlined text-[32px]">video_library</span>
                         </div>
                         <h3 className="font-semibold text-base text-white mb-1">
-                          No Footage Found
+                          No Videos Found
                         </h3>
                         <p className="text-xs text-zinc-400 max-w-sm mb-4">
-                          Import your iPad recordings or PC captures into the vault.
+                          Import your gameplay recordings to get started.
                         </p>
                         <button
                           onClick={() => setIsUploadOpen(true)}
                           className="px-4 py-2 rounded-xl bg-primary text-white font-medium text-xs shadow-md hover:brightness-105 active:scale-98 transition-all cursor-pointer flex items-center gap-1.5"
                         >
                           <span className="material-symbols-outlined text-[16px]">add_to_photos</span>
-                          Import Footage Now (⌘I)
+                          Import Footage (⌘I)
                         </button>
                       </div>
                     )

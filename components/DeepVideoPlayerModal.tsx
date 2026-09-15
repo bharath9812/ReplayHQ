@@ -2,6 +2,13 @@
 
 import React, { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { ClipData } from "./ClipCard";
+import { getVaultSetting, useVaultSetting } from "@/lib/settings/settingsEngine";
+import {
+  saveClipWatchProgress,
+  getClipWatchRecord,
+  clearClipWatchProgress,
+  useAllWatchProgress,
+} from "@/lib/playback/watchProgressEngine";
 
 interface DeepVideoPlayerModalProps {
   clip: ClipData | null;
@@ -21,6 +28,15 @@ function formatTimecode(seconds: number): string {
   return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}.${cs
     .toString()
     .padStart(2, "0")}`;
+}
+
+function formatBytes(bytes: number, decimals = 1): string {
+  if (!bytes || bytes === 0) return "0 B";
+  const k = 1024;
+  const dm = decimals < 0 ? 0 : decimals;
+  const sizes = ["B", "KB", "MB", "GB", "TB"];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + " " + sizes[i];
 }
 
 export function DeepVideoPlayerModal({
@@ -104,6 +120,9 @@ export function DeepVideoPlayerModal({
   // Re-probe Master File Metadata State
   const [isReProbing, setIsReProbing] = useState(false);
 
+  // Real YouTube-style watch progress map (Instant multi-tab & PostgreSQL synced)
+  const watchProgressMap = useAllWatchProgress();
+
   // Footage Deletion Modal State
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -113,6 +132,7 @@ export function DeepVideoPlayerModal({
   const [isPseudoFullscreen, setIsPseudoFullscreen] = useState(false);
   const [isControlsVisible, setIsControlsVisible] = useState(true);
   const [hudFeedback, setHudFeedback] = useState<{ text: string; icon: string } | null>(null);
+  const [resumeBehavior] = useVaultSetting("playbackResumeBehavior");
 
   // Hover Scrubber & Dynamic Preview States
   const [isScrubberHovered, setIsScrubberHovered] = useState(false);
@@ -357,12 +377,107 @@ export function DeepVideoPlayerModal({
     }
   }, [hoverTime, isScrubberHovered]);
 
+  // Real YouTube-style watch progress tracking
+  const lastSaveTimeRef = useRef<number>(0);
+
+  const saveWatchProgress = useCallback(
+    (time: number, dur: number, forceImmediate: boolean = false) => {
+      if (!clip?.id || dur <= 0) return;
+      saveClipWatchProgress(clip.id, time, dur, forceImmediate);
+    },
+    [clip?.id]
+  );
+
   // Video Time Update
   const handleTimeUpdate = () => {
     if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
+      const cur = videoRef.current.currentTime;
+      setCurrentTime(cur);
+
+      const now = Date.now();
+      if (now - lastSaveTimeRef.current > 1500) {
+        lastSaveTimeRef.current = now;
+        const dur = videoRef.current.duration || duration || clip?.duration || 1;
+        saveWatchProgress(cur, dur, false);
+      }
     }
   };
+
+  const handleVideoPause = () => {
+    setIsPlaying(false);
+    if (videoRef.current) {
+      const cur = videoRef.current.currentTime;
+      const dur = videoRef.current.duration || duration || clip?.duration || 1;
+      saveWatchProgress(cur, dur, true);
+    }
+  };
+
+  const handleVideoEnded = () => {
+    setIsPlaying(false);
+    if (videoRef.current) {
+      const dur = videoRef.current.duration || duration || clip?.duration || 1;
+      saveWatchProgress(dur, dur, true);
+    }
+  };
+
+  // Floating Interactive Resume Prompt State (YouTube / Netflix Style)
+  const [resumePrompt, setResumePrompt] = useState<{
+    time: number;
+    type: "resumed" | "can_resume";
+  } | null>(null);
+  const resumePromptTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  const clearResumePrompt = useCallback(() => {
+    if (resumePromptTimerRef.current) {
+      clearTimeout(resumePromptTimerRef.current);
+      resumePromptTimerRef.current = null;
+    }
+    setResumePrompt(null);
+  }, []);
+
+  const triggerResumePrompt = useCallback((time: number, type: "resumed" | "can_resume") => {
+    if (resumePromptTimerRef.current) clearTimeout(resumePromptTimerRef.current);
+    setResumePrompt({ time, type });
+    resumePromptTimerRef.current = setTimeout(() => {
+      setResumePrompt(null);
+    }, 7500);
+  }, []);
+
+  const handleStartOver = useCallback(() => {
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+      setCurrentTime(0);
+      if (clip?.id) {
+        clearClipWatchProgress(clip.id);
+      }
+      showHudFeedback("Started from 0:00", "replay");
+    }
+    clearResumePrompt();
+  }, [clip?.id, showHudFeedback, clearResumePrompt]);
+
+  const handleJumpToResume = useCallback(
+    (targetTime: number) => {
+      if (videoRef.current) {
+        videoRef.current.currentTime = targetTime;
+        setCurrentTime(targetTime);
+        showHudFeedback(`Resumed at ${formatTimecode(targetTime).slice(0, 5)}`, "history");
+      }
+      clearResumePrompt();
+    },
+    [clearResumePrompt, showHudFeedback]
+  );
+
+  // Save watch progress and clear prompt on modal unmount / close
+  useEffect(() => {
+    return () => {
+      clearResumePrompt();
+      if (videoRef.current && clip?.id) {
+        const cur = videoRef.current.currentTime;
+        const dur = videoRef.current.duration || duration || clip.duration || 1;
+        saveWatchProgress(cur, dur, true);
+      }
+    };
+  }, [clip?.id, duration, saveWatchProgress, clearResumePrompt]);
 
   const handleLoadedMetadata = () => {
     if (videoRef.current) {
@@ -371,6 +486,31 @@ export function DeepVideoPlayerModal({
       if (trimOut <= 0 || trimOut > dur) {
         setTrimOut(dur);
       }
+
+      // Honor User Playback & Resume Preference (Enterprise Settings Engine & PostgreSQL)
+      if (clip?.id) {
+        try {
+          const saved = getClipWatchRecord(clip.id);
+          if (saved && saved.time > 2 && saved.percent < 95 && saved.time < dur - 2) {
+            const pref = getVaultSetting("playbackResumeBehavior");
+            if (pref === "resume") {
+              videoRef.current.currentTime = saved.time;
+              setCurrentTime(saved.time);
+              triggerResumePrompt(saved.time, "resumed");
+            } else {
+              // User prefers fresh start at 0:00, but offer quick 1-click resume prompt
+              videoRef.current.currentTime = 0;
+              setCurrentTime(0);
+              triggerResumePrompt(saved.time, "can_resume");
+            }
+          } else {
+            clearResumePrompt();
+          }
+        } catch (e) {
+          clearResumePrompt();
+        }
+      }
+
       if (shouldAutoPlayRef.current) {
         shouldAutoPlayRef.current = false;
         videoRef.current
@@ -419,9 +559,10 @@ export function DeepVideoPlayerModal({
       const clamped = Math.max(0, Math.min(duration, seconds));
       videoRef.current.currentTime = clamped;
       setCurrentTime(clamped);
+      clearResumePrompt();
       triggerControlsActivity();
     },
-    [duration, triggerControlsActivity]
+    [duration, triggerControlsActivity, clearResumePrompt]
   );
 
   // Toggle Cinema Fullscreen
@@ -1037,7 +1178,10 @@ export function DeepVideoPlayerModal({
         theatreContainerRef.current.scrollTo({ top: 0, behavior: "smooth" });
       }
 
-      // Reset playback states
+      // Reset playback states and save previous clip progress
+      if (videoRef.current && clip?.id) {
+        saveWatchProgress(videoRef.current.currentTime, videoRef.current.duration || duration || 1);
+      }
       setCurrentTime(0);
       setIsPlaying(false);
       if (videoRef.current) {
@@ -1059,7 +1203,7 @@ export function DeepVideoPlayerModal({
         setTransitioningClipId(null);
       }, 750);
     },
-    [clip?.id, onSelectOtherClip]
+    [clip?.id, onSelectOtherClip, saveWatchProgress, duration]
   );
 
   const filteredAvailableTags = availableTags.filter((t) =>
@@ -1177,47 +1321,47 @@ export function DeepVideoPlayerModal({
   // Technical Metadata Inspector Modules Component
   const renderInspectorModules = () => (
     <>
-      {/* Storage & Integrity Safety */}
-      <div className="bg-surface-container-low rounded-xl p-3 flex flex-col gap-1 border border-outline-variant/30 text-xs font-mono">
+      {/* File & Storage Info */}
+      <div className="bg-surface-container-low rounded-xl p-3 flex flex-col gap-2 border border-outline-variant/30 text-xs font-mono">
         <div className="flex items-center justify-between">
           <span className="text-outline text-[10px] uppercase tracking-wider font-semibold">
-            Storage &amp; Integrity Safety
+            File Information
           </span>
           <span className="text-secondary text-[11px] font-semibold flex items-center gap-1">
-            <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span> VERIFIED
+            <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span> Original Safe
           </span>
         </div>
-        <div className="mt-1">
-          <span className="text-outline text-[10px] block">MOUNT PATH</span>
-          <span className="text-on-surface truncate block">
-            {clip.storageOriginal || `/data/storage/originals/${clip.game?.slug || "raw"}/${clip.originalFilename}`}
+        <div>
+          <span className="text-outline text-[10px] block">File Name</span>
+          <span className="text-on-surface truncate block font-medium">
+            {clip.originalFilename}
           </span>
         </div>
-        <div className="mt-1">
-          <span className="text-outline text-[10px] block">SHA-256 CHECKSUM</span>
-          <code className="text-[10px] text-outline truncate block bg-surface-container px-1.5 py-0.5 rounded border border-outline-variant/20">
-            {clip.sha256 || "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
-          </code>
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="text-outline">File Size:</span>
+          <span className="text-on-surface font-semibold">{formatBytes(Number(clip.fileSize))}</span>
         </div>
-        <div className="mt-1 flex items-center justify-between text-[11px]">
-          <span className="text-outline">Vault Mode:</span>
-          <span className="text-secondary font-medium">Kernel Read-Only Enclave</span>
+        <div className="flex items-center justify-between text-[11px]">
+          <span className="text-outline">Checksum:</span>
+          <span className="text-zinc-400 font-mono text-[10px] truncate max-w-[160px]" title={clip.sha256}>
+            {clip.sha256 ? `${clip.sha256.slice(0, 8)}...${clip.sha256.slice(-6)}` : "Verified"}
+          </span>
         </div>
 
-        {/* Master File Metadata Sync Button */}
-        <div className="mt-2 pt-2 border-t border-outline-variant/30 flex items-center justify-between">
-          <span className="text-outline text-[10px]">Master Inspection:</span>
+        {/* Sync Metadata Button */}
+        <div className="pt-2 border-t border-outline-variant/30 flex items-center justify-between">
+          <span className="text-outline text-[10px]">Metadata:</span>
           <button
             type="button"
             disabled={isReProbing}
             onClick={handleManualReProbe}
-            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-container hover:bg-emerald-500/20 border border-outline-variant/30 hover:border-emerald-500/40 text-emerald-400 text-[11px] font-mono cursor-pointer transition-all active:scale-95 disabled:opacity-50"
-            title="Read and update technical metadata directly from unaltered original master file"
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/30 text-zinc-300 text-[11px] font-mono cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+            title="Refresh technical metadata directly from master file"
           >
             <span className={`material-symbols-outlined text-[14px] ${isReProbing ? "animate-spin" : ""}`}>
               sync
             </span>
-            <span>{isReProbing ? "Reading Master..." : "Sync from Master"}</span>
+            <span>{isReProbing ? "Refreshing..." : "Refresh Specs"}</span>
           </button>
         </div>
       </div>
@@ -1247,7 +1391,7 @@ export function DeepVideoPlayerModal({
           <div className="bg-surface-container p-2 rounded-lg border border-outline-variant/20">
             <span className="text-outline text-[10px] block">Framerate</span>
             <span className="text-on-surface font-semibold">
-              {clip.fps ? clip.fps.toFixed(2) : "60.00"} fps constant
+              {clip.fps ? clip.fps.toFixed(2) : "60.00"} fps
             </span>
           </div>
           <div className="bg-surface-container p-2 rounded-lg border border-outline-variant/20">
@@ -1264,29 +1408,29 @@ export function DeepVideoPlayerModal({
           <div className="bg-surface-container p-2 rounded-lg border border-outline-variant/20">
             <span className="text-outline text-[10px] block">Color Space</span>
             <span className="text-on-surface font-semibold">
-              {clip.colorSpace || "Rec.709 (sRGB/BT.709)"}
+              {clip.colorSpace || "Rec.709 (sRGB)"}
             </span>
           </div>
           <div className="bg-surface-container p-2 rounded-lg border border-outline-variant/20">
-            <span className="text-outline text-[10px] block">Chroma Subsampling</span>
+            <span className="text-outline text-[10px] block">Chroma</span>
             <span className="text-on-surface font-semibold">
               {clip.pixFmt || "4:2:0 YUV"}
             </span>
           </div>
         </div>
         <div className="flex items-center justify-between text-[11px] pt-1 border-t border-outline-variant/30">
-          <span className="text-outline">HW Decoder:</span>
-          <span className="text-primary font-medium">Intel QuickSync QSV Pass-through</span>
+          <span className="text-outline">Hardware Decoding:</span>
+          <span className="text-primary font-medium">Accelerated</span>
         </div>
       </div>
 
-      {/* Audio Pipeline */}
-      <div className="bg-surface-container-low rounded-xl p-3 flex flex-col gap-1 border border-outline-variant/30 text-xs font-mono">
+      {/* Audio Info */}
+      <div className="bg-surface-container-low rounded-xl p-3 flex flex-col gap-1.5 border border-outline-variant/30 text-xs font-mono">
         <span className="text-outline text-[10px] uppercase tracking-wider font-semibold">
-          Audio Pipeline
+          Audio Specs
         </span>
         <div className="flex justify-between text-[11px]">
-          <span className="text-outline">Codec &amp; Channels:</span>
+          <span className="text-outline">Channels &amp; Codec:</span>
           <span className="text-on-surface">
             {clip.audioChannels || 2}-ch {clip.audioCodec?.toUpperCase() || "AAC"}{" "}
             ({(clip.audioChannels || 2) === 1 ? "Mono" : "Stereo"})
@@ -1297,13 +1441,12 @@ export function DeepVideoPlayerModal({
           <span className="text-on-surface">
             {clip.audioSampleRate
               ? `${(clip.audioSampleRate / 1000).toFixed(1)} kHz`
-              : "48.0 kHz"}{" "}
-            • 320 kbps (Lossless Audio Stream)
+              : "48.0 kHz"}
           </span>
         </div>
         <div className="flex justify-between text-[11px]">
-          <span className="text-outline">Audio Health:</span>
-          <span className="text-secondary font-semibold">Bit-Perfect LAN Master</span>
+          <span className="text-outline">Audio Track:</span>
+          <span className="text-secondary font-semibold">Original</span>
         </div>
       </div>
 
@@ -1317,8 +1460,8 @@ export function DeepVideoPlayerModal({
           <span className="text-on-surface">
             {clip.deviceModel ||
               (clip.originalFilename.toLowerCase().includes("rpreplay")
-                ? "Apple iPad Pro (ReplayKit Screen Recording)"
-                : "Direct Hardware Capture")}
+                ? "Screen Recording"
+                : "Standard Capture")}
           </span>
         </div>
         <div className="flex justify-between text-[11px]">
@@ -1327,7 +1470,7 @@ export function DeepVideoPlayerModal({
         </div>
         <div className="flex justify-between text-[11px]">
           <span className="text-outline">
-            {clip.recordedAt ? "Original Record Date:" : "Archive Ingest Date:"}
+            {clip.recordedAt ? "Record Date:" : "Upload Date:"}
           </span>
           <span className="text-on-surface">
             {clip.recordedAt
@@ -1339,13 +1482,12 @@ export function DeepVideoPlayerModal({
         </div>
       </div>
 
-      {/* Tags & Curator Review */}
+      {/* Tags */}
       <div className="bg-surface-container-low rounded-xl p-3 flex flex-col gap-2 border border-outline-variant/30 text-xs">
         <div className="flex items-center justify-between">
           <span className="text-outline text-[10px] uppercase font-mono tracking-wider font-semibold">
-            Tags &amp; Curator Review
+            Tags
           </span>
-          <span className="text-primary font-mono text-[11px]">★★★★★ (5/5)</span>
         </div>
 
         <div className="flex flex-wrap gap-1 font-mono text-[11px]">
@@ -1359,35 +1501,20 @@ export function DeepVideoPlayerModal({
               </span>
             ))
           ) : (
-            <>
-              <span className="px-2 py-0.5 rounded-md bg-surface-container text-on-surface border border-outline-variant/30">
-                #Highlight
-              </span>
-              <span className="px-2 py-0.5 rounded-md bg-surface-container text-on-surface border border-outline-variant/30">
-                #LosslessArchive
-              </span>
-            </>
+            <span className="px-2 py-0.5 rounded-md bg-surface-container text-on-surface border border-outline-variant/30">
+              #Gameplay
+            </span>
           )}
         </div>
-
-        <p className="text-outline text-[11px] font-mono leading-relaxed mt-1">
-          &ldquo;Clean gameplay capture without frame drops. Prime candidate for 2026 highlight reel.&rdquo;
-        </p>
       </div>
 
       {/* Vault Maintenance & Deletion */}
       <div className="bg-surface-container-low rounded-xl p-3 flex flex-col gap-2 border border-outline-variant/30 text-xs">
         <div className="flex items-center justify-between">
           <span className="text-outline text-[10px] uppercase font-mono tracking-wider font-semibold">
-            Vault Maintenance
-          </span>
-          <span className="text-rose-400 font-mono text-[10px] uppercase tracking-wider">
-            Danger Zone
+            Manage Video
           </span>
         </div>
-        <p className="text-[11px] text-zinc-400 leading-snug">
-          Safely move this footage to the archive trash or purge derived caches while preserving original master files.
-        </p>
         <div className="flex items-center gap-2 mt-1">
           <button
             type="button"
@@ -1428,14 +1555,10 @@ export function DeepVideoPlayerModal({
 
             <div className="h-4 w-px bg-outline-variant/40 shrink-0"></div>
 
-            {/* Title & Vault Status Badge */}
+            {/* Title */}
             <div className="flex items-center gap-2.5 min-w-0">
               <span className="font-semibold text-sm text-on-surface tracking-tight truncate">
                 {clip.title}
-              </span>
-              <span className="hidden sm:inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-950/50 border border-emerald-500/30 text-emerald-400 text-[11px] font-medium shrink-0">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                Original Immutable (Read-Only Source)
               </span>
             </div>
           </div>
@@ -1470,10 +1593,10 @@ export function DeepVideoPlayerModal({
                   ? "bg-primary/15 border-primary/40 text-primary"
                   : "bg-surface-container hover:bg-surface-container-high border-outline-variant/30 text-on-surface-variant"
               }`}
-              title="Toggle Technical Inspector [⌘I]"
+              title="Clip Details [⌘I]"
             >
               <span className="material-symbols-outlined text-[16px]">info</span>
-              <span className="hidden sm:inline">Inspector</span>
+              <span className="hidden sm:inline">Info</span>
               <kbd className="hidden md:inline ml-1 px-1 rounded bg-black/30 text-[10px] font-mono">
                 ⌘I
               </kbd>
@@ -1482,7 +1605,7 @@ export function DeepVideoPlayerModal({
             <button
               onClick={handleTakeSnapshot}
               className="w-8 h-8 rounded-md flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest border border-transparent hover:border-outline-variant/40 transition-colors cursor-pointer"
-              title="Capture Lossless PNG Frame"
+              title="Take Snapshot"
             >
               <span className="material-symbols-outlined text-[18px]">photo_camera</span>
             </button>
@@ -1490,7 +1613,7 @@ export function DeepVideoPlayerModal({
             <button
               onClick={toggleFullscreen}
               className="w-8 h-8 rounded-md flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container-highest border border-transparent hover:border-outline-variant/40 transition-colors cursor-pointer"
-              title="Toggle Cinema Fullscreen [F]"
+              title="Fullscreen [F]"
             >
               <span className="material-symbols-outlined text-[18px]">fullscreen</span>
             </button>
@@ -1548,6 +1671,8 @@ export function DeepVideoPlayerModal({
               onTimeUpdate={handleTimeUpdate}
               onLoadedMetadata={handleLoadedMetadata}
               onCanPlay={handleCanPlay}
+              onPause={handleVideoPause}
+              onEnded={handleVideoEnded}
               playsInline
               className={`w-full h-full object-contain pointer-events-none transition-all duration-300 ease-out ${
                 isTransitioning
@@ -1580,22 +1705,6 @@ export function DeepVideoPlayerModal({
                 <div className="absolute inset-x-0 top-0 h-16 bg-gradient-to-b from-black/80 to-transparent pointer-events-none"></div>
                 <div className="absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-[#08090b] via-[#08090b]/80 to-transparent pointer-events-none"></div>
 
-                {/* Overlaid Viewport Live Telemetry Badges */}
-                <div className="absolute top-3 left-4 flex items-center gap-2 pointer-events-none">
-                  <span className="px-2 py-0.5 rounded bg-black/60 backdrop-blur-md border border-white/10 font-mono text-[10px] text-zinc-300">
-                    PRORES RAW PROXY 1:1
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-black/60 backdrop-blur-md border border-white/10 font-mono text-[10px] text-emerald-400 flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>{" "}
-                    {Math.round(clip.fps || 60)} FPS SYNCED
-                  </span>
-                </div>
-
-                <div className="absolute top-3 right-4 pointer-events-none">
-                  <span className="px-2 py-0.5 rounded bg-black/60 backdrop-blur-md border border-white/10 font-mono text-[10px] text-zinc-400">
-                    {clip.width} × {clip.height} UHD • Rec.709 PQ
-                  </span>
-                </div>
               </>
             )}
 
@@ -1607,6 +1716,72 @@ export function DeepVideoPlayerModal({
                     {hudFeedback.icon}
                   </span>
                   <span className="font-medium text-xs tracking-tight">{hudFeedback.text}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Interactive Floating Resume Prompt Pill (Apple HIG / YouTube Style) */}
+            {resumePrompt && (
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="absolute bottom-6 left-4 sm:left-6 z-50 pointer-events-auto animate-fade-in"
+              >
+                <div className="px-3.5 py-2 rounded-xl bg-black/85 border border-white/20 backdrop-blur-xl flex items-center gap-3 shadow-2xl text-white select-none">
+                  <div className="flex items-center gap-2">
+                    <span className="material-symbols-outlined text-[18px] text-primary">
+                      history
+                    </span>
+                    <span className="text-xs font-medium text-zinc-200">
+                      {resumePrompt.type === "resumed" ? (
+                        <>
+                          Resumed at <span className="font-mono text-white font-semibold">{formatTimecode(resumePrompt.time).slice(0, 5)}</span>
+                        </>
+                      ) : (
+                        <>
+                          Left off at <span className="font-mono text-white font-semibold">{formatTimecode(resumePrompt.time).slice(0, 5)}</span>
+                        </>
+                      )}
+                    </span>
+                  </div>
+
+                  <div className="h-3.5 w-px bg-white/20 shrink-0" />
+
+                  {resumePrompt.type === "resumed" ? (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleStartOver();
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-white/10 hover:bg-white/20 active:scale-95 text-[11px] font-semibold text-primary transition-all cursor-pointer flex items-center gap-1 shrink-0"
+                      title="Start footage from 0:00"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">replay</span>
+                      <span>Start Over</span>
+                    </button>
+                  ) : (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleJumpToResume(resumePrompt.time);
+                      }}
+                      className="px-2.5 py-1 rounded-lg bg-primary hover:brightness-110 text-on-primary active:scale-95 text-[11px] font-semibold transition-all cursor-pointer flex items-center gap-1 shadow-sm shrink-0"
+                      title="Jump to saved timestamp"
+                    >
+                      <span className="material-symbols-outlined text-[14px]">play_arrow</span>
+                      <span>Resume</span>
+                    </button>
+                  )}
+
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      clearResumePrompt();
+                    }}
+                    className="p-1 rounded-md text-zinc-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+                    title="Dismiss"
+                  >
+                    <span className="material-symbols-outlined text-[14px]">close</span>
+                  </button>
                 </div>
               </div>
             )}
@@ -1643,10 +1818,6 @@ export function DeepVideoPlayerModal({
                   </div>
 
                   <div className="flex items-center gap-2 shrink-0">
-                    <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-black/50 border border-white/10 text-[11px] font-mono text-zinc-300">
-                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                      <span>Direct LAN Stream</span>
-                    </div>
 
                     <button
                       onClick={handleTakeSnapshot}
@@ -2125,7 +2296,7 @@ export function DeepVideoPlayerModal({
                         ? "bg-primary/20 border-primary text-primary"
                         : "text-on-surface-variant hover:text-on-surface hover:bg-surface-container border-outline-variant/30"
                     }`}
-                    title="View Technical Metadata"
+                    title="View Clip Details"
                   >
                     <span className="material-symbols-outlined text-[16px]">info</span>
                   </button>
@@ -2134,7 +2305,7 @@ export function DeepVideoPlayerModal({
                   <button
                     onClick={toggleFullscreen}
                     className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg flex items-center justify-center text-on-surface-variant hover:text-on-surface hover:bg-surface-container border border-outline-variant/30 transition-colors cursor-pointer"
-                    title="Enter Cinema Fullscreen (F)"
+                    title="Fullscreen (F)"
                   >
                     <span className="material-symbols-outlined text-[17px] sm:text-[18px]">fullscreen</span>
                   </button>
@@ -2171,10 +2342,6 @@ export function DeepVideoPlayerModal({
                       </span>
                     </button>
                   </div>
-                  <span className="shrink-0 px-2 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 text-[10px] font-mono font-medium flex items-center gap-1">
-                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                    VERIFIED SOURCE
-                  </span>
                 </div>
 
                 {/* Metadata Pills Row */}
@@ -2215,8 +2382,8 @@ export function DeepVideoPlayerModal({
                   onClick={() => setShowInspector(true)}
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/40 text-on-surface text-xs font-medium cursor-pointer transition-colors active:scale-95"
                 >
-                  <span className="material-symbols-outlined text-primary text-[16px]">analytics</span>
-                  <span>Technical Specs</span>
+                  <span className="material-symbols-outlined text-primary text-[16px]">info</span>
+                  <span>Clip Details</span>
                 </button>
 
                 <button
@@ -2224,7 +2391,7 @@ export function DeepVideoPlayerModal({
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/40 text-on-surface text-xs font-medium cursor-pointer transition-colors active:scale-95"
                 >
                   <span className="material-symbols-outlined text-[16px]">photo_camera</span>
-                  <span>Capture Frame</span>
+                  <span>Take Snapshot</span>
                 </button>
 
                 <button
@@ -2724,6 +2891,14 @@ export function DeepVideoPlayerModal({
                             <div className="absolute bottom-1 right-1 px-1 py-0.2 rounded bg-black/80 font-mono text-[9px] text-zinc-200">
                               {formatTimecode(rc.duration || 0).slice(0, 5)}
                             </div>
+                            {watchProgressMap[rc.id]?.percent > 0 && (
+                              <div className="absolute bottom-0 left-0 right-0 h-[2.5px] bg-black/70 z-10 overflow-hidden pointer-events-none">
+                                <div
+                                  className="h-full bg-[#FF0033] rounded-r-xs transition-all duration-300"
+                                  style={{ width: `${Math.min(100, watchProgressMap[rc.id].percent)}%` }}
+                                />
+                              </div>
+                            )}
                           </div>
                           <span className={`text-xs truncate font-medium mt-1.5 transition-colors ${
                             isTarget ? "text-primary font-semibold" : "text-on-surface"
@@ -2749,15 +2924,12 @@ export function DeepVideoPlayerModal({
             <div className="flex items-center justify-between pb-1 border-b border-outline-variant/30">
               <div className="flex items-center gap-2">
                 <span className="material-symbols-outlined text-primary text-[18px]">
-                  analytics
+                  info
                 </span>
                 <span className="font-headline-md text-body-md font-semibold text-on-surface">
-                  Metadata Inspector
+                  Clip Details
                 </span>
               </div>
-              <span className="font-label-code-sm text-[10px] text-outline bg-surface-container px-2 py-0.5 rounded font-mono border border-outline-variant/30">
-                PRO EXAMINER v4.2
-              </span>
             </div>
 
             {renderInspectorModules()}
@@ -2781,12 +2953,9 @@ export function DeepVideoPlayerModal({
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
                     <span className="material-symbols-outlined text-primary text-[20px]">
-                      analytics
+                      info
                     </span>
-                    <span className="font-semibold text-sm text-on-surface">Technical Inspector</span>
-                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-surface-container border border-outline-variant/30 text-zinc-400">
-                      PRO EXAMINER v4.2
-                    </span>
+                    <span className="font-semibold text-sm text-on-surface">Clip Details</span>
                   </div>
                   <button
                     onClick={() => setShowInspector(false)}

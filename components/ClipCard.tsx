@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
+import { useClipWatchPercent } from "@/lib/playback/watchProgressEngine";
 
 export interface ClipData {
   id: string;
@@ -106,6 +107,9 @@ export function ClipCard({
 
   const isGenerating = clip.status === "processing";
 
+  // Real YouTube-style watch progress (0-100%) with instant multi-tab & PostgreSQL sync
+  const watchPercent = useClipWatchPercent(clip.id);
+
   return (
     <div
       onClick={() => onSelect(clip)}
@@ -160,24 +164,15 @@ export function ClipCard({
           />
         )}
 
-        {/* Top Left Status & Codec Badges */}
-        <div className="absolute top-2 left-2 flex items-center gap-1.5 z-10 pointer-events-none">
-          {isGenerating ? (
+        {/* Top Left Status Badge (Only shown if actively generating) */}
+        {isGenerating && (
+          <div className="absolute top-2 left-2 flex items-center gap-1.5 z-10 pointer-events-none">
             <span className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-surface-container-lowest/90 backdrop-blur-md font-label-code-sm text-label-code-sm text-tertiary border border-outline-variant/30">
               <span className="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
               <span>Processing...</span>
             </span>
-          ) : (
-            <span className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-surface-container-lowest/85 backdrop-blur-md font-label-code-sm text-label-code-sm text-secondary border border-outline-variant/30">
-              <span className="w-1.5 h-1.5 rounded-full bg-secondary"></span>
-              <span>Verified</span>
-            </span>
-          )}
-
-          <span className="px-1.5 py-0.5 rounded bg-surface-container-lowest/80 backdrop-blur-md font-label-code-sm text-label-code-sm text-outline border border-outline-variant/30 uppercase">
-            {clip.codec || "HEVC"}
-          </span>
-        </div>
+          </div>
+        )}
 
         {/* Top Right Checkbox / Star Indicator */}
         <div className="absolute top-2 right-2 flex items-center gap-1.5 z-10">
@@ -239,15 +234,19 @@ export function ClipCard({
           </span>
         </div>
 
-        {/* Watched Progress Line Indicator */}
-        <div className="absolute bottom-0 left-0 right-0 h-1 bg-surface-container-highest z-10">
-          <div
-            className={`h-full ${
-              isGenerating ? "bg-tertiary animate-pulse" : "bg-secondary"
-            }`}
-            style={{ width: isGenerating ? "82%" : "100%" }}
-          ></div>
-        </div>
+        {/* Real YouTube-Style Watch Progress Indicator */}
+        {isGenerating ? (
+          <div className="absolute bottom-0 left-0 right-0 h-1 bg-surface-container-highest z-10 overflow-hidden">
+            <div className="h-full bg-tertiary animate-pulse" style={{ width: "82%" }} />
+          </div>
+        ) : watchPercent > 0 ? (
+          <div className="absolute bottom-0 left-0 right-0 h-[3px] bg-black/70 z-10 overflow-hidden pointer-events-none">
+            <div
+              className="h-full bg-[#FF0033] rounded-r-xs transition-all duration-300"
+              style={{ width: `${Math.min(100, Math.max(0, watchPercent))}%` }}
+            />
+          </div>
+        ) : null}
       </div>
 
       {/* Card Content Body */}
@@ -258,7 +257,7 @@ export function ClipCard({
               {clip.title}
             </span>
             <span className="font-label-code-sm text-label-code-sm text-outline truncate">
-              {clip.game?.name || "Uncategorized"} · {sizeText} · {bitrateText}
+              {clip.game?.name || "Uncategorized"} · {sizeText}
             </span>
           </div>
 

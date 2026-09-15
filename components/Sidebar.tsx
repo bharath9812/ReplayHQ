@@ -136,6 +136,25 @@ export function Sidebar({
   // Expanded folders per game
   const [expandedGames, setExpandedGames] = useState<Record<string, boolean>>({});
 
+
+
+  // Track mobile screen state (viewport < 768px)
+  const [isMobileScreen, setIsMobileScreen] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return window.innerWidth < 768;
+    }
+    return false;
+  });
+
+  useEffect(() => {
+    const handleResize = () => {
+      setIsMobileScreen(window.innerWidth < 768);
+    };
+    handleResize();
+    window.addEventListener("resize", handleResize);
+    return () => window.removeEventListener("resize", handleResize);
+  }, []);
+
   const toggleGameExpanded = (slug: string, e: React.MouseEvent) => {
     e.stopPropagation();
     setExpandedGames((prev) => ({
@@ -262,10 +281,10 @@ export function Sidebar({
       <aside
         ref={asideRef}
         style={{
-          width: isCollapsed ? 0 : "var(--sidebar-width, 260px)",
+          width: isMobileScreen ? undefined : (isCollapsed ? 0 : "var(--sidebar-width, 260px)"),
         }}
-        className={`fixed md:static top-0 left-0 h-[100dvh] bg-surface-container-lowest flex flex-col z-50 shrink-0 select-none overflow-hidden relative ${
-          isDragging ? "transition-none select-none" : "transition-[width,opacity] duration-300 ease-in-out"
+        className={`fixed md:relative top-0 left-0 h-[100dvh] bg-surface-container-lowest flex flex-col z-50 shrink-0 select-none overflow-hidden ${
+          isDragging ? "transition-none select-none" : "transition-[width,transform,opacity] duration-300 ease-in-out"
         } ${
           isOpenMobile
             ? "translate-x-0 shadow-2xl md:shadow-none border-r border-outline-variant/40 pointer-events-auto"
@@ -274,7 +293,7 @@ export function Sidebar({
           isCollapsed
             ? "md:w-0 md:border-r-0 md:opacity-0 md:pointer-events-none"
             : "md:border-r md:border-outline-variant/40 md:opacity-100"
-        }`}
+        } w-[280px] max-w-[85vw] md:max-w-none`}
       >
         {/* Draggable Border Handle for Width Resizing */}
         {!isCollapsed && (
@@ -305,9 +324,9 @@ export function Sidebar({
                   <span className="font-headline-md text-body-md text-on-surface font-semibold tracking-tight">
                     GameVault
                   </span>
-                  <span className="font-label-code-sm text-label-code-sm text-outline flex items-center gap-space-2xs">
-                    <span className="w-1.5 h-1.5 rounded-full bg-secondary inline-block animate-pulse"></span>
-                    LAN 1 Gbps • i5 Host
+                  <span className="font-label-code-sm text-label-code-sm text-emerald-400 flex items-center gap-1.5">
+                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 inline-block"></span>
+                    Online
                   </span>
                 </div>
               </div>
@@ -780,12 +799,12 @@ export function Sidebar({
                 }`}
               >
                 <span className="flex items-center gap-space-sm font-body-sm text-body-sm">
-                  <span className="material-symbols-outlined text-[16px] text-secondary">
-                    verified_user
-                  </span>
+                  <span className="material-symbols-outlined text-[16px]">security</span>
                   Storage &amp; Integrity
                 </span>
-                <span className="material-symbols-outlined text-secondary text-[14px]">check</span>
+                <span className="font-label-code-sm text-[10px] text-secondary">
+                  Immutable
+                </span>
               </button>
 
               <button
@@ -793,50 +812,54 @@ export function Sidebar({
                   onSelectView("activity-log");
                   if (isOpenMobile) onCloseMobile();
                 }}
-                className={`w-full flex items-center gap-space-sm px-space-sm py-space-xs rounded-lg transition-colors cursor-pointer text-left ${
+                className={`w-full flex items-center justify-between px-space-sm py-space-xs rounded-lg transition-colors cursor-pointer text-left ${
                   currentView === "activity-log"
                     ? "bg-surface-container text-on-surface font-medium border border-outline-variant/30 shadow-xs"
                     : "text-on-surface-variant hover:bg-surface-container/60 hover:text-on-surface"
                 }`}
               >
-                <span className="material-symbols-outlined text-[16px]">format_list_bulleted</span>
-                <span className="font-body-sm text-body-sm">Activity Log</span>
+                <span className="flex items-center gap-space-sm font-body-sm text-body-sm">
+                  <span className="material-symbols-outlined text-[16px]">terminal</span>
+                  Activity Log
+                </span>
               </button>
             </nav>
           </section>
+
         </div>
 
-        {/* Bottom Storage & Server Telemetry */}
+        {/* Bottom Storage & Server Status */}
         <div className="p-3 bg-surface-container-low border-t border-outline-variant/40 flex flex-col gap-2.5 shrink-0">
-          {/* Storage Telemetry Card */}
-          <div className="p-2.5 rounded-xl bg-surface-container/60 border border-outline-variant/25 flex flex-col gap-1.5 shadow-xs">
-            {/* Storage Used by this App */}
+          {/* Storage Meter Card (Clicking opens Settings) */}
+          <div
+            onClick={onOpenSettings}
+            className="p-2.5 rounded-xl bg-surface-container/60 hover:bg-surface-container border border-outline-variant/25 flex flex-col gap-1.5 shadow-xs cursor-pointer transition-colors"
+            title="Open Settings & Storage Details"
+          >
+            {/* Library Storage */}
             <div className="flex justify-between items-center text-xs font-mono">
               <span className="text-zinc-400 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-primary"></span>
-                App Storage
+                Library Media
               </span>
               <span className="text-white font-semibold">{displayAppStorage}</span>
             </div>
 
-            {/* Storage Available to Use on Server */}
+            {/* Free Storage */}
             <div className="flex justify-between items-center text-xs font-mono">
               <span className="text-zinc-400 flex items-center gap-1.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
-                Server Available
+                Free Space
               </span>
               <span className="text-emerald-400 font-semibold">{displayServerAvailable}</span>
             </div>
 
             {/* Visual Storage Bar */}
             <div className="w-full h-1.5 rounded-full bg-white/10 overflow-hidden mt-0.5 relative flex shadow-inner">
-              {/* GameVault App Media (Primary Blue) */}
               <div
                 style={{ width: `${Math.max(1, Math.min(100, appStorageUsedPercent ?? 3))}%` }}
                 className="h-full bg-primary transition-all duration-500 shrink-0"
-                title={`GameVault Media: ${displayAppStorage}`}
               ></div>
-              {/* Other Host Storage on Server Volume (Vibrant Indigo) */}
               <div
                 style={{
                   width: `${Math.max(
@@ -848,16 +871,13 @@ export function Sidebar({
                   )}%`,
                 }}
                 className="h-full bg-indigo-500/90 transition-all duration-500 shrink-0"
-                title={`Other Server Storage: ${serverUsedBytesStr || "Host Storage"}`}
               ></div>
             </div>
 
-            {/* Capacity breakdown footer */}
+            {/* Capacity summary */}
             {displayServerTotal && (
               <div className="flex items-center justify-between text-[10px] font-mono text-zinc-400 pt-0.5">
-                <span>
-                  Total: {displayServerTotal} ({storagePoolUsedPercent ?? 86}% used)
-                </span>
+                <span>Total: {displayServerTotal}</span>
                 <span className="text-emerald-400 font-medium">{displayServerAvailable} free</span>
               </div>
             )}
@@ -865,24 +885,28 @@ export function Sidebar({
 
           {/* Server Host & Settings Row */}
           <div className="flex items-center justify-between px-0.5 pt-0.5">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 flex items-center justify-center shrink-0 shadow-xs">
+            <button
+              onClick={onOpenSettings}
+              className="flex items-center gap-2 min-w-0 text-left cursor-pointer group"
+              title="Open Settings & System Details"
+            >
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/25 flex items-center justify-center shrink-0 shadow-xs group-hover:bg-emerald-500/20 transition-colors">
                 <span className="material-symbols-outlined text-[16px]">dns</span>
               </div>
               <div className="flex flex-col min-w-0">
-                <span className="font-body-sm text-xs text-on-surface truncate font-medium">
-                  {hostName || "Debian Host"}
+                <span className="font-body-sm text-xs text-on-surface truncate font-medium group-hover:text-white transition-colors">
+                  GameVault Server
                 </span>
                 <span className="font-label-code-sm text-[10px] text-emerald-400 leading-tight flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span> Online • 192.168.1.9
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400"></span> Online
                 </span>
               </div>
-            </div>
+            </button>
 
             <button
               onClick={onOpenSettings}
               className="w-7 h-7 rounded-lg flex items-center justify-center text-outline hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer border border-transparent hover:border-outline-variant/30 shrink-0"
-              title="Settings & System Directives"
+              title="Settings"
             >
               <span className="material-symbols-outlined text-[18px]">settings</span>
             </button>

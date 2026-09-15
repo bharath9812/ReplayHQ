@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useVaultSetting } from "@/lib/settings/settingsEngine";
 
 interface GameProfile {
   id: string;
@@ -45,14 +46,7 @@ export function SettingsModal({
   onRefreshGames,
   onRefreshTags,
 }: SettingsModalProps) {
-  const [activeTab, setActiveTab] = useState<"games" | "tags" | "ingest" | "server" | "history">("games");
-
-  // Ingest History Audit State (Server-persisted & Power-cut safe)
-  const [historyRecords, setHistoryRecords] = useState<any[]>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historySearch, setHistorySearch] = useState("");
-  const [historyFilter, setHistoryFilter] = useState<"all" | "completed" | "duplicate" | "error">("all");
-  const [confirmClearServerHistory, setConfirmClearServerHistory] = useState(false);
+  const [activeTab, setActiveTab] = useState<"games" | "tags" | "ingest" | "server">("games");
 
   // Game Categories State
   const [newName, setNewName] = useState("");
@@ -77,30 +71,48 @@ export function SettingsModal({
   const [isDeletingUnused, setIsDeletingUnused] = useState(false);
   const [tagFilter, setTagFilter] = useState<"all" | "used" | "unused">("all");
 
-  // Ingest visualization preference
-  const [uploadStyle, setUploadStyle] = useState<"graph" | "progress-bar">("graph");
+  // Playback resume preference (Enterprise Settings Engine)
+  const [resumeBehavior, setResumeBehavior] = useVaultSetting("playbackResumeBehavior");
 
-  // Folder browsing style preference
-  const [folderStyle, setFolderStyle] = useState<"shelf" | "finder">("shelf");
+  // Ingest visualization preference (Enterprise Settings Engine)
+  const [uploadStyle, setUploadStyle] = useVaultSetting("uploadChartStyle");
 
-  // Load preferences from localStorage
-  useEffect(() => {
+  // Folder browsing style preference (Enterprise Settings Engine)
+  const [folderStyle, setFolderStyle] = useVaultSetting("folderBrowsingStyle");
+
+  // Centralized Dynamic Linux System Stats
+  const [systemStats, setSystemStats] = useState<any>(null);
+
+  const fetchSystemStats = useCallback(async () => {
     try {
-      const savedUpload = localStorage.getItem("gamevault_upload_chart_style");
-      if (savedUpload === "progress-bar" || savedUpload === "graph") {
-        setUploadStyle(savedUpload);
-      }
-      const savedFolder = localStorage.getItem("gamevault_folder_style");
-      if (savedFolder === "finder" || savedFolder === "shelf") {
-        setFolderStyle(savedFolder);
+      const res = await fetch("/api/system/stats");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success) setSystemStats(data);
       }
     } catch {}
   }, []);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    fetchSystemStats();
+  }, [isOpen, fetchSystemStats]);
+
+  // Close modal on Escape key press
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isOpen, onClose]);
+
   const handleSetUploadStyle = (style: "graph" | "progress-bar") => {
     setUploadStyle(style);
     try {
-      localStorage.setItem("gamevault_upload_chart_style", style);
       window.dispatchEvent(new CustomEvent("gamevault_upload_style_changed", { detail: style }));
     } catch {}
   };
@@ -108,7 +120,6 @@ export function SettingsModal({
   const handleSetFolderStyle = (style: "shelf" | "finder") => {
     setFolderStyle(style);
     try {
-      localStorage.setItem("gamevault_folder_style", style);
       window.dispatchEvent(new CustomEvent("gamevault_folder_style_changed", { detail: style }));
     } catch {}
   };
@@ -309,176 +320,177 @@ export function SettingsModal({
     return true;
   });
 
-  // Ingest History Handlers
-  const fetchHistory = useCallback(async () => {
-    setHistoryLoading(true);
-    try {
-      const res = await fetch("/api/ingest-history");
-      const data = await res.json();
-      if (data.success && Array.isArray(data.records)) {
-        setHistoryRecords(data.records);
-      }
-    } catch (err) {
-      console.warn("Failed to fetch ingest history:", err);
-    } finally {
-      setHistoryLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    if (activeTab === "history") {
-      fetchHistory();
-    }
-  }, [activeTab, fetchHistory]);
-
-  const handleDeleteHistoryItem = async (id: string) => {
-    try {
-      await fetch(`/api/ingest-history?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-      setHistoryRecords((prev) => prev.filter((r) => r.id !== id));
-      try {
-        const saved = localStorage.getItem("gamevault_ingest_history");
-        if (saved) {
-          const list = JSON.parse(saved);
-          localStorage.setItem("gamevault_ingest_history", JSON.stringify(list.filter((r: any) => r.id !== id)));
-        }
-      } catch {}
-    } catch {}
-  };
-
-  const handleClearAllHistory = async () => {
-    try {
-      await fetch("/api/ingest-history", { method: "DELETE" });
-      setHistoryRecords([]);
-      setConfirmClearServerHistory(false);
-      try {
-        localStorage.removeItem("gamevault_ingest_history");
-      } catch {}
-    } catch {}
-  };
-
-  const handleExportHistory = () => {
-    const jsonStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(historyRecords, null, 2));
-    const downloadAnchor = document.createElement("a");
-    downloadAnchor.setAttribute("href", jsonStr);
-    downloadAnchor.setAttribute("download", `gamevault_ingest_audit_${new Date().toISOString().slice(0, 10)}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
-  };
-
-  const filteredHistory = historyRecords.filter((h) => {
-    const matchesSearch =
-      !historySearch.trim() ||
-      h.filename.toLowerCase().includes(historySearch.toLowerCase().trim()) ||
-      (h.sha256 && h.sha256.toLowerCase().includes(historySearch.toLowerCase().trim()));
-    if (!matchesSearch) return false;
-    if (historyFilter === "all") return true;
-    return h.status === historyFilter;
-  });
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-0 sm:p-4 select-none animate-fade-in overflow-hidden overscroll-none">
-      <div className="w-full max-w-2xl h-[100dvh] sm:h-auto sm:max-h-[88dvh] sm:rounded-2xl bg-surface-container-lowest border border-outline-variant/40 shadow-2xl p-4 sm:p-6 relative flex flex-col text-on-surface overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between pb-4 border-b border-outline-variant/30">
-          <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-primary border border-outline-variant/30 shadow-xs">
-              <span className="material-symbols-outlined text-[20px]">settings</span>
+    <div 
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-2 sm:p-6 select-none animate-fade-in overflow-hidden overscroll-none"
+      onClick={onClose}
+    >
+      <div 
+        className="w-full max-w-5xl h-[94vh] sm:h-[84vh] sm:min-h-[600px] sm:max-h-[760px] rounded-2xl bg-surface-container-lowest border border-outline-variant/30 shadow-2xl relative flex flex-col md:flex-row text-on-surface overflow-hidden"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Left Navigation Sidebar (Notion-Style) */}
+        <aside className="w-full md:w-60 lg:w-64 border-b md:border-b-0 md:border-r border-outline-variant/20 bg-surface-container-lowest/95 md:bg-zinc-950/40 flex flex-col shrink-0">
+          {/* Sidebar Top: Branding & Host Info */}
+          <div className="p-3.5 sm:p-4 flex items-center justify-between border-b border-outline-variant/15">
+            <div className="flex items-center gap-2.5 min-w-0">
+              <div className="w-8 h-8 rounded-lg bg-surface-container flex items-center justify-center text-primary border border-outline-variant/30 shadow-xs shrink-0">
+                <span className="material-symbols-outlined text-[18px]">settings</span>
+              </div>
+              <div className="min-w-0">
+                <h2 className="font-semibold text-xs sm:text-sm text-on-surface truncate">Settings</h2>
+                <p className="text-[10px] text-outline truncate">Preferences &amp; System</p>
+              </div>
             </div>
-            <div>
-              <h2 className="font-semibold text-sm text-on-surface">GameVault Settings</h2>
-              <p className="text-xs text-outline font-mono">192.168.1.9 • Port 3845 • Direct LAN</p>
-            </div>
+            {/* Mobile close button */}
+            <button
+              onClick={onClose}
+              className="md:hidden p-1 rounded-lg text-outline hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer"
+              title="Close"
+            >
+              <span className="material-symbols-outlined text-[18px]">close</span>
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-lg text-outline hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer"
-          >
-            <span className="material-symbols-outlined text-[20px]">close</span>
-          </button>
-        </div>
 
-        {/* Tab Controls */}
-        <div className="flex border-b border-outline-variant/30 pt-3 gap-1 overflow-x-auto no-scrollbar">
-          <button
-            onClick={() => setActiveTab("games")}
-            className={`px-3 py-2 font-medium text-xs flex items-center gap-1.5 border-b-2 transition-colors cursor-pointer shrink-0 ${
-              activeTab === "games"
-                ? "border-primary text-primary"
-                : "border-transparent text-outline hover:text-on-surface"
-            }`}
-          >
-            <span className="material-symbols-outlined text-[16px]">category</span>
-            <span>Category Manager</span>
-            {unusedGamesCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-400 font-mono text-[10px] border border-amber-500/30">
-                {unusedGamesCount} empty
-              </span>
-            )}
-          </button>
+          {/* Navigation Items (Scrollable on small height or mobile) */}
+          <div className="flex md:flex-col p-2 md:p-3 gap-1 overflow-x-auto md:overflow-y-auto no-scrollbar flex-1">
+            {/* Group 1: LIBRARY */}
+            <div className="hidden md:block px-2.5 pt-1.5 pb-1 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+              Library
+            </div>
 
-          <button
-            onClick={() => setActiveTab("tags")}
-            className={`px-3 py-2 font-medium text-xs flex items-center gap-1.5 border-b-2 transition-colors cursor-pointer shrink-0 ${
-              activeTab === "tags"
-                ? "border-primary text-primary"
-                : "border-transparent text-outline hover:text-on-surface"
-            }`}
-          >
-            <span className="material-symbols-outlined text-[16px]">label</span>
-            <span>Tag Manager</span>
-            {unusedTagsCount > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-400 font-mono text-[10px] border border-amber-500/30">
-                {unusedTagsCount} unused
-              </span>
-            )}
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("games")}
+              className={`px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 transition-all cursor-pointer shrink-0 text-left ${
+                activeTab === "games"
+                  ? "bg-white/[0.08] text-on-surface font-medium border border-outline-variant/30 shadow-xs"
+                  : "text-outline hover:text-on-surface hover:bg-white/[0.03] border border-transparent"
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className={`material-symbols-outlined text-[17px] ${activeTab === "games" ? "text-primary" : "text-outline"}`}>
+                  category
+                </span>
+                <span className="truncate">Category Manager</span>
+              </div>
+              {unusedGamesCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-400 font-mono text-[10px] border border-amber-500/30 shrink-0">
+                  {unusedGamesCount}
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={() => setActiveTab("ingest")}
-            className={`px-3 py-2 font-medium text-xs flex items-center gap-1.5 border-b-2 transition-colors cursor-pointer shrink-0 ${
-              activeTab === "ingest"
-                ? "border-primary text-primary"
-                : "border-transparent text-outline hover:text-on-surface"
-            }`}
-          >
-            <span className="material-symbols-outlined text-[16px]">tune</span>
-            <span>Ingest &amp; Folders</span>
-          </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("tags")}
+              className={`px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 transition-all cursor-pointer shrink-0 text-left ${
+                activeTab === "tags"
+                  ? "bg-white/[0.08] text-on-surface font-medium border border-outline-variant/30 shadow-xs"
+                  : "text-outline hover:text-on-surface hover:bg-white/[0.03] border border-transparent"
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className={`material-symbols-outlined text-[17px] ${activeTab === "tags" ? "text-primary" : "text-outline"}`}>
+                  label
+                </span>
+                <span className="truncate">Tag Manager</span>
+              </div>
+              {unusedTagsCount > 0 && (
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-500/20 text-amber-400 font-mono text-[10px] border border-amber-500/30 shrink-0">
+                  {unusedTagsCount}
+                </span>
+              )}
+            </button>
 
-          <button
-            onClick={() => setActiveTab("server")}
-            className={`px-3 py-2 font-medium text-xs flex items-center gap-1.5 border-b-2 transition-colors cursor-pointer shrink-0 ${
-              activeTab === "server"
-                ? "border-primary text-primary"
-                : "border-transparent text-outline hover:text-on-surface"
-            }`}
-          >
-            <span className="material-symbols-outlined text-[16px]">dns</span>
-            <span>Architecture</span>
-          </button>
+            {/* Group 2: PREFERENCES */}
+            <div className="hidden md:block px-2.5 pt-3 pb-1 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+              Preferences
+            </div>
 
-          <button
-            onClick={() => setActiveTab("history")}
-            className={`px-3 py-2 font-medium text-xs flex items-center gap-1.5 border-b-2 transition-colors cursor-pointer shrink-0 ${
-              activeTab === "history"
-                ? "border-primary text-primary"
-                : "border-transparent text-outline hover:text-on-surface"
-            }`}
-          >
-            <span className="material-symbols-outlined text-[16px]">history</span>
-            <span>Ingest Audit Log</span>
-            {historyRecords.length > 0 && (
-              <span className="px-1.5 py-0.2 rounded-full bg-primary/20 text-primary font-mono text-[10px] border border-primary/30">
-                {historyRecords.length}
-              </span>
-            )}
-          </button>
-        </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab("ingest")}
+              className={`px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 transition-all cursor-pointer shrink-0 text-left ${
+                activeTab === "ingest"
+                  ? "bg-white/[0.08] text-on-surface font-medium border border-outline-variant/30 shadow-xs"
+                  : "text-outline hover:text-on-surface hover:bg-white/[0.03] border border-transparent"
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className={`material-symbols-outlined text-[17px] ${activeTab === "ingest" ? "text-primary" : "text-outline"}`}>
+                  play_circle
+                </span>
+                <span className="truncate">Playback &amp; Uploads</span>
+              </div>
+            </button>
 
-        {/* Tab Body */}
-        <div className="flex-1 overflow-y-auto py-4 space-y-5 no-scrollbar">
-          {/* TAB 1: CATEGORY / GAME MANAGER */}
+            {/* Group 3: SYSTEM */}
+            <div className="hidden md:block px-2.5 pt-3 pb-1 text-[10px] font-semibold tracking-wider text-zinc-500 uppercase">
+              System
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab("server")}
+              className={`px-3 py-2 rounded-lg text-xs flex items-center justify-between gap-2 transition-all cursor-pointer shrink-0 text-left ${
+                activeTab === "server"
+                  ? "bg-white/[0.08] text-on-surface font-medium border border-outline-variant/30 shadow-xs"
+                  : "text-outline hover:text-on-surface hover:bg-white/[0.03] border border-transparent"
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className={`material-symbols-outlined text-[17px] ${activeTab === "server" ? "text-primary" : "text-outline"}`}>
+                  info
+                </span>
+                <span className="truncate">About GameVault</span>
+              </div>
+            </button>
+          </div>
+
+          {/* Sidebar Bottom: Dynamic Host Status Footer */}
+          <div className="hidden md:flex p-3 border-t border-outline-variant/15 mt-auto items-center justify-between text-[11px] text-outline bg-surface-container-lowest/40">
+            <div className="flex items-center gap-1.5">
+              <span className="w-2 h-2 rounded-full bg-emerald-400" />
+              <span className="text-xs text-zinc-400 font-medium">Server Connected</span>
+            </div>
+            <span className="px-1.5 py-0.5 rounded bg-surface-container font-mono text-[9px] border border-outline-variant/20 text-emerald-400">
+              ACTIVE
+            </span>
+          </div>
+        </aside>
+
+        {/* Right Main Content Canvas */}
+        <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-surface-container-lowest">
+          {/* Header Bar */}
+          <div className="px-5 py-3.5 sm:px-8 sm:py-5 border-b border-outline-variant/20 flex items-center justify-between shrink-0 bg-surface-container-lowest/80 backdrop-blur-xs">
+            <div>
+              <h1 className="text-base sm:text-lg font-semibold text-on-surface flex items-center gap-2">
+                {activeTab === "games" && "Category Manager"}
+                {activeTab === "tags" && "Tag Manager"}
+                {activeTab === "ingest" && "Playback & Uploads"}
+                {activeTab === "server" && "About GameVault"}
+              </h1>
+              <p className="text-xs text-outline mt-0.5">
+                {activeTab === "games" && "Manage game categories, storage subfolders, and auto-matching rules."}
+                {activeTab === "tags" && "Organize custom tags and review metadata usage across your library."}
+                {activeTab === "ingest" && "Configure playback resume, upload speed graphs, and display preferences."}
+                {activeTab === "server" && "App details, storage safety architecture, and server info."}
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 rounded-lg text-outline hover:text-on-surface hover:bg-surface-container transition-colors cursor-pointer flex items-center gap-1 group"
+              title="Close (Esc)"
+            >
+              <span className="text-[11px] font-mono text-zinc-500 group-hover:text-zinc-400 hidden sm:inline">Esc</span>
+              <span className="material-symbols-outlined text-[18px] sm:text-[20px]">close</span>
+            </button>
+          </div>
+
+          {/* Scrollable Tab Canvas Body */}
+          <div className="flex-1 overflow-y-auto px-5 sm:px-8 py-5 sm:py-6 space-y-6 no-scrollbar">
+            {/* TAB 1: CATEGORY / GAME MANAGER */}
           {activeTab === "games" && (
             <div className="space-y-5 font-sans">
               {/* Error banner if deletion rejected */}
@@ -884,9 +896,92 @@ export function SettingsModal({
             </div>
           )}
 
-          {/* TAB 3: INGEST & GRAPH VISUALIZATION */}
+          {/* TAB 3: PLAYBACK & INGEST PREFERENCES */}
           {activeTab === "ingest" && (
             <div className="space-y-4">
+              {/* Playback & Resume Directive */}
+              <div className="p-4 rounded-xl bg-surface-container-low border border-outline-variant/30 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-xs text-primary uppercase tracking-wider font-mono flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[18px]">play_circle</span>
+                    Playback &amp; Resume
+                  </span>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-primary/15 text-primary border border-primary/30 font-mono">
+                    Instant Auto-Sync
+                  </span>
+                </div>
+                <p className="text-xs text-outline leading-relaxed">
+                  Choose whether footage automatically resumes from your last watched timestamp (like YouTube), or always begins at 0:00. This preference is honored everywhere across all devices.
+                </p>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                  {/* Option 1: Resume from Last Left */}
+                  <div
+                    onClick={() => setResumeBehavior("resume")}
+                    className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex flex-col gap-2 ${
+                      resumeBehavior === "resume"
+                        ? "border-primary bg-primary/10 shadow-md"
+                        : "border-outline-variant/30 bg-surface-container hover:border-outline-variant/60"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-primary text-[20px]">history</span>
+                        <span className="font-semibold text-xs text-on-surface">Resume from Last Left</span>
+                      </div>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-primary font-mono">
+                        YouTube Style
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-outline leading-normal">
+                      Automatically starts playback at the exact timestamp you left off. Includes a 1-click &quot;Start Over&quot; HUD prompt in the player.
+                    </p>
+                    <div className="h-10 w-full rounded-lg bg-black/50 border border-outline-variant/20 flex items-center px-3 gap-2 mt-1">
+                      <span className="text-[10px] font-mono text-zinc-400">03:45</span>
+                      <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="w-[45%] h-full bg-[#FF0033] rounded-full" />
+                      </div>
+                      <span className="text-[9px] px-1 rounded bg-[#FF0033]/20 text-[#FF6680] font-mono">
+                        Resume
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Option 2: Always Start at 0:00 */}
+                  <div
+                    onClick={() => setResumeBehavior("beginning")}
+                    className={`p-4 rounded-xl border-2 cursor-pointer transition-all flex flex-col gap-2 ${
+                      resumeBehavior === "beginning"
+                        ? "border-primary bg-primary/10 shadow-md"
+                        : "border-outline-variant/30 bg-surface-container hover:border-outline-variant/60"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <span className="material-symbols-outlined text-primary text-[20px]">first_page</span>
+                        <span className="font-semibold text-xs text-on-surface">Always Start at 0:00</span>
+                      </div>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-container-highest text-outline font-mono">
+                        Fresh Start
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-outline leading-normal">
+                      Always begins playback from 0:00. Watch history red bars remain visible on library cards, and a quick &quot;Resume&quot; button appears in the player HUD.
+                    </p>
+                    <div className="h-10 w-full rounded-lg bg-black/50 border border-outline-variant/20 flex items-center px-3 gap-2 mt-1">
+                      <span className="text-[10px] font-mono text-primary font-bold">00:00</span>
+                      <div className="flex-1 h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                        <div className="w-[0%] h-full bg-[#FF0033] rounded-full" />
+                      </div>
+                      <span className="text-[9px] px-1 rounded bg-zinc-700 text-zinc-300 font-mono">
+                        Start 0:00
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Upload Telemetry Mode */}
               <div className="p-4 rounded-xl bg-surface-container-low border border-outline-variant/30 space-y-3">
                 <span className="font-semibold text-xs text-primary uppercase tracking-wider font-mono flex items-center gap-1.5">
                   <span className="material-symbols-outlined text-[18px]">show_chart</span>
@@ -1062,299 +1157,136 @@ export function SettingsModal({
             </div>
           )}
 
-          {/* TAB 4: ARCHITECTURE & SAFEGUARDS */}
+          {/* TAB 4: ABOUT GAMEVAULT */}
           {activeTab === "server" && (
-            <div className="space-y-4 text-xs font-mono">
-              <div className="p-4 rounded-xl bg-surface-container-low border border-outline-variant/30 space-y-2">
-                <span className="font-semibold text-xs text-secondary uppercase tracking-wider flex items-center gap-1.5">
-                  <span className="material-symbols-outlined text-[16px]">verified</span>
-                  Zero-Corruption Invariants
-                </span>
-                <p className="text-outline leading-relaxed font-sans">
-                  All master gameplay clips uploaded from iPad or PC are saved once into{" "}
-                  <code className="bg-surface-container px-1 py-0.5 rounded text-on-surface">/data/storage/originals/</code> with{" "}
-                  <code className="bg-surface-container px-1 py-0.5 rounded text-on-surface">chmod 440</code> write protection.
-                  Thumbnails, storyboard scrubbing sheets, and trimmed highlights are strictly placed in{" "}
-                  <code className="bg-surface-container px-1 py-0.5 rounded text-on-surface">/data/storage/derived/</code>.
-                </p>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3 text-[11px]">
-                <div className="p-3 rounded-lg bg-surface-container border border-outline-variant/20">
-                  <span className="text-outline block mb-1">Assigned Port</span>
-                  <span className="text-on-surface font-semibold text-sm">3845</span>
-                </div>
-                <div className="p-3 rounded-lg bg-surface-container border border-outline-variant/20">
-                  <span className="text-outline block mb-1">Side-by-Side Isolation</span>
-                  <span className="text-secondary font-semibold">Zero Collision with 3840</span>
-                </div>
-                <div className="p-3 rounded-lg bg-surface-container border border-outline-variant/20">
-                  <span className="text-outline block mb-1">Streaming Mode</span>
-                  <span className="text-on-surface font-semibold">HTTP 206 Partial Content</span>
-                </div>
-                <div className="p-3 rounded-lg bg-surface-container border border-outline-variant/20">
-                  <span className="text-outline block mb-1">Hardware Acceleration</span>
-                  <span className="text-on-surface font-semibold">Intel QuickSync (/dev/dri)</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* TAB 5: INGEST HISTORY & AUDIT LOG */}
-          {activeTab === "history" && (
-            <div className="space-y-4 font-sans">
-              {/* Resilient Audit Log Info Banner */}
-              <div className="p-3.5 rounded-xl bg-primary/10 border border-primary/30 flex items-center justify-between gap-3 text-xs font-mono">
-                <div className="flex items-center gap-2">
-                  <span className="material-symbols-outlined text-[20px] text-primary">cloud_done</span>
+            <div className="space-y-5 text-xs font-sans">
+              {/* App Overview Card */}
+              <div className="p-5 rounded-2xl bg-surface-container-low border border-outline-variant/25 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+                <div className="flex items-center gap-3.5">
+                  <div className="w-12 h-12 rounded-xl bg-primary/10 border border-primary/25 flex items-center justify-center shrink-0">
+                    <span className="material-symbols-outlined text-[26px] text-primary">videogame_asset</span>
+                  </div>
                   <div>
-                    <span className="text-on-surface font-semibold block">Permanent Server-Persisted Audit Log</span>
-                    <span className="text-[11px] text-outline">
-                      Resistant to power cuts, browser cache clears, and container restarts.
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-semibold text-on-surface">GameVault Media Engine</span>
+                      <span className="px-2 py-0.5 rounded-full bg-primary/15 text-primary font-mono text-[10px] font-semibold border border-primary/25">
+                        v2.4.0
+                      </span>
+                    </div>
+                    <p className="text-outline text-xs mt-0.5">
+                      Lossless gameplay recording vault, timeline scrubber, and high-throughput media streamer.
+                    </p>
                   </div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <button
-                    onClick={handleExportHistory}
-                    disabled={historyRecords.length === 0}
-                    className="px-2.5 py-1 rounded-lg bg-surface-container hover:bg-surface-container-high border border-outline-variant/30 text-on-surface text-xs font-mono transition-colors cursor-pointer flex items-center gap-1 disabled:opacity-40"
-                    title="Export history audit log as JSON"
-                  >
-                    <span className="material-symbols-outlined text-[14px]">download</span>
-                    <span>Export JSON</span>
-                  </button>
-                  {historyRecords.length > 0 && (
-                    confirmClearServerHistory ? (
-                      <div className="flex items-center gap-1.5 animate-fade-in">
-                        <span className="text-[11px] text-amber-300 font-mono">Clear all?</span>
-                        <button
-                          onClick={handleClearAllHistory}
-                          className="px-2 py-1 rounded bg-error/30 hover:bg-error/50 text-error border border-error/50 text-xs font-mono font-semibold cursor-pointer"
-                        >
-                          Confirm
-                        </button>
-                        <button
-                          onClick={() => setConfirmClearServerHistory(false)}
-                          className="px-2 py-1 rounded bg-surface-container text-zinc-400 hover:text-white border border-outline-variant/30 text-xs font-mono cursor-pointer"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setConfirmClearServerHistory(true)}
-                        className="px-2.5 py-1 rounded-lg bg-surface-container hover:bg-error-container/30 hover:text-error border border-outline-variant/30 text-outline text-xs font-mono transition-colors cursor-pointer flex items-center gap-1"
-                      >
-                        <span className="material-symbols-outlined text-[14px]">delete_sweep</span>
-                        <span>Clear All</span>
-                      </button>
-                    )
-                  )}
-                </div>
-              </div>
-
-              {/* KPI Analytics Summary Cards */}
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5 text-xs font-mono">
-                <div className="p-3 rounded-xl bg-surface-container-low border border-outline-variant/20">
-                  <span className="text-[10px] text-outline uppercase block mb-1">Total Ingests</span>
-                  <span className="text-on-surface font-semibold text-sm">{historyRecords.length}</span>
-                </div>
-                <div className="p-3 rounded-xl bg-surface-container-low border border-outline-variant/20">
-                  <span className="text-[10px] text-outline uppercase block mb-1">Volume Archived</span>
-                  <span className="text-primary font-semibold text-sm">
-                    {formatBytes(historyRecords.reduce((acc, r) => acc + (r.fileSize || 0), 0))}
-                  </span>
-                </div>
-                <div className="p-3 rounded-xl bg-surface-container-low border border-outline-variant/20">
-                  <span className="text-[10px] text-outline uppercase block mb-1">Avg Upload Speed</span>
-                  <span className="text-secondary font-semibold text-sm">
-                    {(() => {
-                      const list = historyRecords.filter((r) => r.averageSpeedBytesPerSec > 0);
-                      if (list.length === 0) return "--";
-                      const avg = list.reduce((a, b) => a + b.averageSpeedBytesPerSec, 0) / list.length;
-                      return `${(avg / (1024 * 1024)).toFixed(1)} MB/s`;
-                    })()}
-                  </span>
-                </div>
-                <div className="p-3 rounded-xl bg-surface-container-low border border-outline-variant/20">
-                  <span className="text-[10px] text-outline uppercase block mb-1">Avg Processing</span>
-                  <span className="text-amber-400 font-semibold text-sm">
-                    {(() => {
-                      const list = historyRecords.filter((r) => r.processingDurationSeconds > 0);
-                      if (list.length === 0) return "--";
-                      const avg = Math.round(list.reduce((a, b) => a + b.processingDurationSeconds, 0) / list.length);
-                      return `${avg}s`;
-                    })()}
+                  <span className="px-2.5 py-1 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono text-[11px] flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+                    Host Operational
                   </span>
                 </div>
               </div>
 
-              {/* Search & Filter Bar */}
-              <div className="flex flex-wrap items-center justify-between gap-2.5">
-                <div className="relative flex-1 min-w-[200px]">
-                  <input
-                    type="text"
-                    value={historySearch}
-                    onChange={(e) => setHistorySearch(e.target.value)}
-                    placeholder="Search by file name or SHA-256 hash..."
-                    className="w-full pl-8 pr-3 py-1.5 rounded-lg bg-surface-container border border-outline-variant/30 text-xs text-on-surface focus:outline-none focus:border-primary font-mono"
-                  />
-                  <span className="material-symbols-outlined text-outline text-[16px] absolute left-2.5 top-1/2 -translate-y-1/2">
-                    search
+              {/* Zero-Corruption Storage Safeguards */}
+              <div className="p-4 rounded-xl bg-surface-container-low border border-outline-variant/25 space-y-3">
+                <span className="font-semibold text-xs text-secondary uppercase tracking-wider flex items-center gap-1.5">
+                  <span className="material-symbols-outlined text-[16px]">verified_user</span>
+                  Zero-Corruption Storage Architecture
+                </span>
+                <p className="text-outline leading-relaxed text-xs">
+                  Original gameplay recordings uploaded from iPad or PC are treated as write-once, read-only master files.
+                  They are permanently mounted with strict read permissions in{" "}
+                  <code className="bg-surface-container px-1.5 py-0.5 rounded text-on-surface font-mono text-[11px]">
+                    /data/storage/originals/
+                  </code>
+                  . Thumbnails, 320x180 storyboard scrubbing sheets, and trimmed clips reside exclusively in{" "}
+                  <code className="bg-surface-container px-1.5 py-0.5 rounded text-on-surface font-mono text-[11px]">
+                    /data/storage/derived/
+                  </code>
+                  , guaranteeing the source footage is never modified or compressed.
+                </p>
+              </div>
+
+              {/* Dynamic Topology & Specs Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className="p-3.5 rounded-xl bg-surface-container border border-outline-variant/20 flex flex-col gap-1">
+                  <span className="text-outline text-[11px] flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[15px] text-primary">router</span>
+                    Assigned Network Port
                   </span>
+                  <span className="text-on-surface font-mono font-semibold text-sm">
+                    {systemStats?.host?.port || (typeof window !== "undefined" && window.location.port ? window.location.port : "3845")}
+                  </span>
+                  <span className="text-[10px] text-zinc-500 font-mono">Dedicated container port</span>
                 </div>
 
-                <div className="flex rounded-lg bg-surface-container p-0.5 border border-outline-variant/30 text-[11px] font-mono shrink-0">
-                  <button
-                    onClick={() => setHistoryFilter("all")}
-                    className={`px-2 py-1 rounded-md transition-colors ${
-                      historyFilter === "all" ? "bg-primary text-on-primary font-semibold" : "text-outline hover:text-on-surface"
-                    }`}
-                  >
-                    All ({historyRecords.length})
-                  </button>
-                  <button
-                    onClick={() => setHistoryFilter("completed")}
-                    className={`px-2 py-1 rounded-md transition-colors ${
-                      historyFilter === "completed" ? "bg-primary text-on-primary font-semibold" : "text-outline hover:text-on-surface"
-                    }`}
-                  >
-                    Completed ({historyRecords.filter((r) => r.status === "completed").length})
-                  </button>
-                  <button
-                    onClick={() => setHistoryFilter("duplicate")}
-                    className={`px-2 py-1 rounded-md transition-colors ${
-                      historyFilter === "duplicate" ? "bg-primary text-on-primary font-semibold" : "text-outline hover:text-on-surface"
-                    }`}
-                  >
-                    Deduplicated ({historyRecords.filter((r) => r.status === "duplicate").length})
-                  </button>
-                  <button
-                    onClick={() => setHistoryFilter("error")}
-                    className={`px-2 py-1 rounded-md transition-colors ${
-                      historyFilter === "error" ? "bg-primary text-on-primary font-semibold" : "text-outline hover:text-on-surface"
-                    }`}
-                  >
-                    Failed ({historyRecords.filter((r) => r.status === "error").length})
-                  </button>
+                <div className="p-3.5 rounded-xl bg-surface-container border border-outline-variant/20 flex flex-col gap-1">
+                  <span className="text-outline text-[11px] flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[15px] text-secondary">stream</span>
+                    Streaming Protocol
+                  </span>
+                  <span className="text-on-surface font-semibold text-sm">HTTP 206 Partial Content</span>
+                  <span className="text-[10px] text-zinc-500 font-mono">Byte-range instant seeking for 4K/60fps</span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-surface-container border border-outline-variant/20 flex flex-col gap-1">
+                  <span className="text-outline text-[11px] flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[15px] text-amber-400">bolt</span>
+                    Hardware Acceleration
+                  </span>
+                  <span className="text-on-surface font-semibold text-sm truncate">
+                    {systemStats?.host?.hardwareTranscoder || (systemStats?.host?.hasQuickSync ? "Intel QuickSync (QSV)" : "Hardware Accelerated")}
+                  </span>
+                  <span className="text-[10px] text-zinc-500 font-mono">Hardware pass-through via /dev/dri</span>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-surface-container border border-outline-variant/20 flex flex-col gap-1">
+                  <span className="text-outline text-[11px] flex items-center gap-1.5">
+                    <span className="material-symbols-outlined text-[15px] text-emerald-400">fingerprint</span>
+                    Data Integrity Verification
+                  </span>
+                  <span className="text-emerald-400 font-mono font-semibold text-sm">SHA-256 Checksums</span>
+                  <span className="text-[10px] text-zinc-500 font-mono">Computed on ingestion and verified on audit</span>
                 </div>
               </div>
 
-              {/* Records List */}
-              {historyLoading ? (
-                <div className="py-12 text-center text-outline text-xs flex items-center justify-center gap-2 font-mono">
-                  <span className="material-symbols-outlined text-primary text-[18px] animate-spin">progress_activity</span>
-                  <span>Loading persistent history from server...</span>
+              {/* Dynamic Host & Container Environment */}
+              <div className="p-3.5 rounded-xl bg-surface-container-low border border-outline-variant/20 space-y-2">
+                <span className="text-[11px] font-semibold text-outline uppercase tracking-wider block">
+                  Container &amp; Server Topology
+                </span>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-mono">
+                  <div className="p-2 rounded-lg bg-surface-container/60 border border-outline-variant/15">
+                    <span className="text-zinc-500 block text-[10px]">Host Machine</span>
+                    <span className="text-on-surface font-semibold truncate block">
+                      {systemStats?.host?.hostname || "Server"} ({systemStats?.host?.osType || systemStats?.host?.platform || "Linux"})
+                    </span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-surface-container/60 border border-outline-variant/15">
+                    <span className="text-zinc-500 block text-[10px]">App Container</span>
+                    <span className="text-on-surface font-semibold truncate block">gamevault-app</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-surface-container/60 border border-outline-variant/15">
+                    <span className="text-zinc-500 block text-[10px]">DB Container</span>
+                    <span className="text-on-surface font-semibold truncate block">gamevault-db</span>
+                  </div>
+                  <div className="p-2 rounded-lg bg-surface-container/60 border border-outline-variant/15">
+                    <span className="text-zinc-500 block text-[10px]">Internal Network</span>
+                    <span className="text-on-surface font-semibold truncate block">gamevault_internal</span>
+                  </div>
                 </div>
-              ) : filteredHistory.length === 0 ? (
-                <div className="py-12 text-center text-outline font-mono text-xs rounded-xl border border-outline-variant/20 bg-surface-container-lowest space-y-1">
-                  <span className="material-symbols-outlined text-[32px] text-outline/40 block">history_toggle_off</span>
-                  <p className="text-zinc-300 font-semibold">No Ingest Records Found</p>
-                  <p className="text-[11px] text-zinc-500">
-                    Uploads performed via Brave, Safari, Chrome, or iPadOS will be logged here.
-                  </p>
-                </div>
-              ) : (
-                <div className="space-y-2.5 max-h-[380px] overflow-y-auto pr-1 no-scrollbar font-mono">
-                  {filteredHistory.map((hist) => (
-                    <div
-                      key={hist.id + hist.completedAt}
-                      className="p-3 rounded-xl bg-surface-container-low border border-outline-variant/30 space-y-2 text-xs transition-colors hover:border-outline-variant/60"
-                    >
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2 min-w-0">
-                          <span className="material-symbols-outlined text-[16px] text-primary shrink-0">movie</span>
-                          <span className="font-semibold text-on-surface truncate" title={hist.filename}>
-                            {hist.filename}
-                          </span>
-                          <span className="text-[10px] text-outline shrink-0">
-                            ({formatBytes(hist.fileSize)})
-                          </span>
-                        </div>
 
-                        <div className="flex items-center gap-2 shrink-0">
-                          {hist.status === "completed" && (
-                            <span className="px-2 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/40 text-emerald-400 text-[10px] font-semibold">
-                              Completed ✓
-                            </span>
-                          )}
-                          {hist.status === "duplicate" && (
-                            <span className="px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-semibold">
-                              Deduplicated
-                            </span>
-                          )}
-                          {hist.status === "error" && (
-                            <span className="px-2 py-0.5 rounded-full bg-error-container/40 border border-error/40 text-error text-[10px] font-semibold">
-                              Failed ✕
-                            </span>
-                          )}
-
-                          <button
-                            onClick={() => handleDeleteHistoryItem(hist.id)}
-                            className="p-1 rounded text-outline hover:text-error hover:bg-surface-container transition-colors cursor-pointer"
-                            title="Remove this entry"
-                          >
-                            <span className="material-symbols-outlined text-[14px]">close</span>
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* 4-column metrics */}
-                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px]">
-                        <div className="p-1.5 rounded-lg bg-surface-container-lowest border border-outline-variant/20">
-                          <span className="text-[9px] text-outline block">Upload</span>
-                          <span className="text-on-surface font-semibold">
-                            {hist.uploadDurationSeconds ? `${Math.floor(hist.uploadDurationSeconds / 60)}m ${hist.uploadDurationSeconds % 60}s` : "--"}
-                          </span>
-                        </div>
-                        <div className="p-1.5 rounded-lg bg-surface-container-lowest border border-outline-variant/20">
-                          <span className="text-[9px] text-outline block">Host Processing</span>
-                          <span className="text-on-surface font-semibold">
-                            {hist.processingDurationSeconds ? `${hist.processingDurationSeconds}s` : "--"}
-                          </span>
-                        </div>
-                        <div className="p-1.5 rounded-lg bg-surface-container-lowest border border-outline-variant/20">
-                          <span className="text-[9px] text-outline block">Avg Speed</span>
-                          <span className="text-primary font-semibold">
-                            {hist.averageSpeedBytesPerSec > 0
-                              ? `${(hist.averageSpeedBytesPerSec / (1024 * 1024)).toFixed(1)} MB/s`
-                              : "--"}
-                          </span>
-                        </div>
-                        <div className="p-1.5 rounded-lg bg-surface-container-lowest border border-outline-variant/20">
-                          <span className="text-[9px] text-outline block">Total Ingest</span>
-                          <span className="text-secondary font-semibold">
-                            {hist.totalDurationSeconds ? `${Math.floor(hist.totalDurationSeconds / 60)}m ${hist.totalDurationSeconds % 60}s` : "--"}
-                          </span>
-                        </div>
-                      </div>
-
-                      {hist.errorMessage && (
-                        <div className="text-[10px] text-error bg-error-container/20 p-2 rounded-lg border border-error/30 flex items-center gap-1.5">
-                          <span className="material-symbols-outlined text-[14px] shrink-0">error</span>
-                          <span>{hist.errorMessage}</span>
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between text-[10px] text-zinc-500 pt-1 border-t border-outline-variant/20">
-                        <span>Ingested: {new Date(hist.completedAt).toLocaleString()}</span>
-                        {hist.sha256 && (
-                          <div className="flex items-center gap-1 text-zinc-400">
-                            <span className="text-zinc-500 font-semibold">SHA-256:</span>
-                            <span className="truncate max-w-[200px]" title={hist.sha256}>
-                              {hist.sha256}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
+                {/* Secondary Diagnostic Info */}
+                {systemStats?.host?.ip && (
+                  <div className="pt-2 border-t border-outline-variant/15 flex items-center justify-between text-[10px] text-zinc-500 font-mono">
+                    <span>Host Endpoint:</span>
+                    <span className="text-zinc-400">{systemStats.host.ip}:{systemStats?.host?.port || "3845"}</span>
+                  </div>
+                )}
+              </div>
             </div>
           )}
-        </div>
+          </div>
+        </main>
       </div>
     </div>
   );
