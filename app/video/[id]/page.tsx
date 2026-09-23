@@ -97,6 +97,7 @@ export default function VideoDetailPage() {
       allClips={allClips}
       onClose={() => router.push("/")}
       onSelectOtherClip={(other) => router.push(`/video/${other.id}`)}
+      onUpdateClip={(updated) => setClip(updated)}
       isStandalonePage={true}
     />
   );

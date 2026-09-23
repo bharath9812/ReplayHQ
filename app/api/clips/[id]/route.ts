@@ -93,7 +93,7 @@ export async function PATCH(
 ) {
   try {
     const body = await req.json();
-    const { title, description, gameId, folder, isFavorite, isTrash, tags } = body;
+    const { title, description, gameId, folder, isFavorite, isTrash, tags, recordedAt } = body;
 
     const updateData: any = {};
     if (typeof title === "string") updateData.title = title;
@@ -101,6 +101,9 @@ export async function PATCH(
     if (gameId !== undefined) updateData.gameId = (gameId === "" || gameId === "uncategorized" || gameId === null) ? null : gameId;
     if (folder !== undefined) updateData.folder = folder === "" || folder === "none" ? null : folder;
     if (typeof isFavorite === "boolean") updateData.isFavorite = isFavorite;
+    if (recordedAt !== undefined) {
+      updateData.recordedAt = recordedAt ? new Date(recordedAt) : null;
+    }
 
     if (typeof isTrash === "boolean") {
       updateData.isTrash = isTrash;

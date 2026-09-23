@@ -63,16 +63,23 @@ export function TelemetryInspector({
     );
   }
 
-  const handleSaveMetadata = async () => {
+  const handleSaveMetadata = async (overrides?: {
+    gameId?: string;
+    title?: string;
+    tags?: string[];
+  }) => {
     setIsSaving(true);
+    const targetGameId = overrides?.gameId !== undefined ? overrides.gameId : selectedGameId;
+    const targetTitle = overrides?.title !== undefined ? overrides.title : title;
+    const targetTags = overrides?.tags !== undefined ? overrides.tags : tags;
     try {
       const res = await fetch(`/api/clips/${clip.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          title,
-          gameId: selectedGameId || null,
-          tags,
+          title: targetTitle,
+          gameId: targetGameId || null,
+          tags: targetTags,
         }),
       });
       const data = await res.json();
@@ -92,11 +99,14 @@ export function TelemetryInspector({
       const nextTags = [...tags, clean];
       setTags(nextTags);
       setTagInput("");
+      handleSaveMetadata({ tags: nextTags });
     }
   };
 
   const handleRemoveTag = (tagToRemove: string) => {
-    setTags(tags.filter((t) => t !== tagToRemove));
+    const nextTags = tags.filter((t) => t !== tagToRemove);
+    setTags(nextTags);
+    handleSaveMetadata({ tags: nextTags });
   };
 
   const sizeText = formatBytes(clip.fileSize);
@@ -203,7 +213,7 @@ export function TelemetryInspector({
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
-            onBlur={handleSaveMetadata}
+            onBlur={() => handleSaveMetadata()}
             className="bg-surface-container-low px-2.5 py-1.5 rounded text-on-surface font-body-sm text-body-sm focus:outline-none focus:bg-surface-container border border-outline-variant/30"
             type="text"
           />
@@ -216,8 +226,9 @@ export function TelemetryInspector({
             <select
               value={selectedGameId}
               onChange={(e) => {
-                setSelectedGameId(e.target.value);
-                setTimeout(handleSaveMetadata, 100);
+                const newId = e.target.value;
+                setSelectedGameId(newId);
+                handleSaveMetadata({ gameId: newId });
               }}
               className="w-full appearance-none bg-surface-container-low px-2.5 py-1.5 pr-8 rounded text-on-surface font-body-sm text-body-sm cursor-pointer border border-outline-variant/30 focus:outline-none"
             >

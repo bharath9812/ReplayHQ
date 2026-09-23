@@ -71,6 +71,52 @@ export function DeepVideoPlayerModal({
   const [showInspector, setShowInspector] = useState(false);
   const [isDesktop, setIsDesktop] = useState(false);
 
+  // Editable Title State
+  const [isEditingTitle, setIsEditingTitle] = useState(false);
+  const [titleDraft, setTitleDraft] = useState(initialClip?.title || "");
+  const [isSavingTitle, setIsSavingTitle] = useState(false);
+
+  useEffect(() => {
+    setTitleDraft(clip?.title || "");
+  }, [clip?.title]);
+
+  // Editable Recording Date State
+  const [isEditingDate, setIsEditingDate] = useState(false);
+  const [dateDraft, setDateDraft] = useState("");
+  const [isSavingDate, setIsSavingDate] = useState(false);
+
+  // Editable Game Category State
+  const [availableGames, setAvailableGames] = useState<
+    Array<{
+      id: string;
+      name: string;
+      slug?: string;
+      accentColor?: string;
+      icon?: string;
+      clipCount?: number;
+      folders?: Array<{ name: string; clipCount: number }>;
+      isUncategorized?: boolean;
+    }>
+  >([]);
+  const [isGamePickerOpen, setIsGamePickerOpen] = useState(false);
+  const [gameSearchQuery, setGameSearchQuery] = useState("");
+  const [isGameUpdating, setIsGameUpdating] = useState(false);
+  const gamePickerRef = useRef<HTMLDivElement>(null);
+
+  // Filtered games based on search query
+  const filteredGames = useMemo(() => {
+    const regularGames = availableGames.filter((g) => !g.isUncategorized);
+    if (!gameSearchQuery.trim()) return regularGames;
+    const q = gameSearchQuery.trim().toLowerCase();
+    return regularGames.filter((g) => g.name.toLowerCase().includes(q));
+  }, [availableGames, gameSearchQuery]);
+
+  const exactMatchGame = useMemo(() => {
+    if (!gameSearchQuery.trim()) return true;
+    const q = gameSearchQuery.trim().toLowerCase();
+    return availableGames.some((g) => g.name.toLowerCase() === q);
+  }, [availableGames, gameSearchQuery]);
+
   // Editable Story Description State
   const [isEditingDesc, setIsEditingDesc] = useState(false);
   const [descDraft, setDescDraft] = useState(initialClip?.description || "");
@@ -103,19 +149,30 @@ export function DeepVideoPlayerModal({
   const [isFavoriteUpdating, setIsFavoriteUpdating] = useState(false);
   const handleToggleFavoriteRef = useRef<() => void>(() => {});
 
-  // Distinct folders for this clip's game (or uncategorized) from allClips
+  // Distinct folders for this clip's game (or uncategorized) from allClips and availableGames
   const availableFoldersForGame = useMemo(() => {
     const set = new Set<string>();
     const targetGameId = clip?.game?.id || clip?.gameId || null;
-    if (!allClips) return [];
-    for (const c of allClips) {
-      const cGameId = c.game?.id || c.gameId || null;
-      if (cGameId === targetGameId && c.folder) {
-        set.add(c.folder);
+    if (allClips) {
+      for (const c of allClips) {
+        const cGameId = c.game?.id || c.gameId || null;
+        if (cGameId === targetGameId && c.folder) {
+          set.add(c.folder);
+        }
+      }
+    }
+    if (availableGames && availableGames.length > 0) {
+      const g = availableGames.find(
+        (item) => item.id === targetGameId || (!targetGameId && item.isUncategorized)
+      );
+      if (g && Array.isArray(g.folders)) {
+        for (const f of g.folders) {
+          if (f.name) set.add(f.name);
+        }
       }
     }
     return Array.from(set).sort();
-  }, [clip?.game?.id, clip?.gameId, allClips]);
+  }, [clip?.game?.id, clip?.gameId, allClips, availableGames]);
 
   // Re-probe Master File Metadata State
   const [isReProbing, setIsReProbing] = useState(false);
@@ -261,6 +318,37 @@ export function DeepVideoPlayerModal({
   useEffect(() => {
     fetchAvailableTags();
   }, [fetchAvailableTags]);
+
+  // Fetch available games for category assignment
+  const fetchAvailableGames = useCallback(async () => {
+    try {
+      const res = await fetch("/api/games");
+      const data = await res.json();
+      if (data.success && Array.isArray(data.games)) {
+        setAvailableGames(data.games);
+      }
+    } catch (err) {
+      console.error("Error fetching games:", err);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAvailableGames();
+  }, [fetchAvailableGames]);
+
+  // Close game picker on click outside
+  useEffect(() => {
+    const handleClickOutsideGame = (e: MouseEvent) => {
+      if (gamePickerRef.current && !gamePickerRef.current.contains(e.target as Node)) {
+        setIsGamePickerOpen(false);
+        setGameSearchQuery("");
+      }
+    };
+    if (isGamePickerOpen) {
+      document.addEventListener("mousedown", handleClickOutsideGame);
+    }
+    return () => document.removeEventListener("mousedown", handleClickOutsideGame);
+  }, [isGamePickerOpen]);
 
   // Close tag picker on click outside
   useEffect(() => {
@@ -1041,6 +1129,171 @@ export function DeepVideoPlayerModal({
     }
   };
 
+  // Rename clip title
+  const handleSaveTitle = async () => {
+    if (!clip || isSavingTitle) return;
+    const trimmed = titleDraft.trim();
+    if (!trimmed) {
+      setTitleDraft(clip.title);
+      setIsEditingTitle(false);
+      return;
+    }
+    if (trimmed === clip.title) {
+      setIsEditingTitle(false);
+      return;
+    }
+
+    setIsSavingTitle(true);
+    const optimistic: ClipData = { ...clip, title: trimmed };
+    setClip(optimistic);
+    onUpdateClip?.(optimistic);
+
+    try {
+      const res = await fetch(`/api/clips/${clip.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: trimmed }),
+      });
+      const data = await res.json();
+      if (data.success && data.clip) {
+        setClip(data.clip);
+        onUpdateClip?.(data.clip);
+        setIsEditingTitle(false);
+        showHudFeedback("Title updated", "check_circle");
+        onRefreshClip?.();
+      } else {
+        setClip(clip);
+        onUpdateClip?.(clip);
+        alert(data.error || "Failed to update title");
+      }
+    } catch (err: any) {
+      setClip(clip);
+      onUpdateClip?.(clip);
+      console.error("Update title error:", err);
+      alert("Error updating title: " + err.message);
+    } finally {
+      setIsSavingTitle(false);
+    }
+  };
+
+  // Reassign / Set Game Category for this clip
+  const handleSetClipGame = async (targetGameId: string | null) => {
+    if (!clip || isGameUpdating) return;
+    setIsGameUpdating(true);
+    const normalizedGameId =
+      targetGameId === "uncategorized" || !targetGameId ? null : targetGameId;
+
+    const targetGame = availableGames.find((g) => g.id === normalizedGameId);
+    // Optimistic UI Update
+    const optimistic: ClipData = {
+      ...clip,
+      gameId: normalizedGameId,
+      game: targetGame
+        ? {
+            id: targetGame.id,
+            name: targetGame.name,
+            slug: targetGame.slug || "",
+            accentColor: targetGame.accentColor || "#007AFF",
+          }
+        : null,
+    };
+    setClip(optimistic);
+    onUpdateClip?.(optimistic);
+
+    try {
+      const res = await fetch(`/api/clips/${clip.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gameId: normalizedGameId ?? "uncategorized" }),
+      });
+      const data = await res.json();
+      if (data.success && data.clip) {
+        setClip(data.clip);
+        onUpdateClip?.(data.clip);
+        setIsGamePickerOpen(false);
+        setGameSearchQuery("");
+        showHudFeedback(
+          data.clip.game ? `Game: ${data.clip.game.name}` : "Set to Uncategorized",
+          "sports_esports"
+        );
+        onRefreshClip?.();
+      } else {
+        setClip(clip);
+        onUpdateClip?.(clip);
+        alert(data.error || "Failed to update game category");
+      }
+    } catch (err: any) {
+      setClip(clip);
+      onUpdateClip?.(clip);
+      console.error("Update game error:", err);
+      alert("Error updating game: " + err.message);
+    } finally {
+      setIsGameUpdating(false);
+    }
+  };
+
+  // Quick Create Game Category and immediately assign to this clip
+  const handleCreateAndAssignGame = async (gameName: string) => {
+    if (!gameName.trim() || isGameUpdating) return;
+    setIsGameUpdating(true);
+    try {
+      const clean = gameName.trim();
+      const folderName = clean.toLowerCase().replace(/[^a-z0-9_-]/g, "");
+      const res = await fetch("/api/games", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: clean,
+          folderName: folderName || "game",
+          accentColor: "#0A84FF",
+          icon: "Gamepad2",
+        }),
+      });
+      const data = await res.json();
+      if (data.success && data.game) {
+        await fetchAvailableGames();
+        await handleSetClipGame(data.game.id);
+        setGameSearchQuery("");
+      } else {
+        alert(data.error || "Failed to create new game category");
+      }
+    } catch (err: any) {
+      console.error("Create game error:", err);
+      alert("Error creating game: " + err.message);
+    } finally {
+      setIsGameUpdating(false);
+    }
+  };
+
+  // Save edited recording date
+  const handleSaveDate = async () => {
+    if (!clip || isSavingDate) return;
+    setIsSavingDate(true);
+    try {
+      const targetDate = dateDraft ? new Date(dateDraft).toISOString() : null;
+      const res = await fetch(`/api/clips/${clip.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ recordedAt: targetDate }),
+      });
+      const data = await res.json();
+      if (data.success && data.clip) {
+        setClip(data.clip);
+        onUpdateClip?.(data.clip);
+        setIsEditingDate(false);
+        showHudFeedback("Timestamp updated", "calendar_month");
+        onRefreshClip?.();
+      } else {
+        alert(data.error || "Failed to update recording timestamp");
+      }
+    } catch (err: any) {
+      console.error("Save timestamp error:", err);
+      alert("Error updating timestamp: " + err.message);
+    } finally {
+      setIsSavingDate(false);
+    }
+  };
+
   // Toggle clip membership in multi-game collection
   const handleToggleClipCollection = async (collectionId: string, isCurrentlyIn: boolean) => {
     if (!clip || isCollectionUpdating) return;
@@ -1464,21 +1717,82 @@ export function DeepVideoPlayerModal({
                 : "Standard Capture")}
           </span>
         </div>
-        <div className="flex justify-between text-[11px]">
+        <div className="flex items-center justify-between text-[11px]">
           <span className="text-outline">Software / Game:</span>
-          <span className="text-on-surface">{clip.game?.name || "Gaming Archive"}</span>
+          <button
+            type="button"
+            onClick={() => {
+              setIsGamePickerOpen(true);
+              fetchAvailableGames();
+            }}
+            className="text-primary hover:underline font-medium flex items-center gap-1 cursor-pointer transition-colors"
+            title="Assign / Change Game Category"
+          >
+            <span>{clip.game?.name || "Uncategorized"}</span>
+            <span className="material-symbols-outlined text-[13px]">edit</span>
+          </button>
         </div>
-        <div className="flex justify-between text-[11px]">
+        <div className="flex items-center justify-between text-[11px] pt-1 border-t border-outline-variant/20">
           <span className="text-outline">
             {clip.recordedAt ? "Record Date:" : "Upload Date:"}
           </span>
-          <span className="text-on-surface">
-            {clip.recordedAt
-              ? new Date(clip.recordedAt).toLocaleString()
-              : clip.createdAt
-              ? new Date(clip.createdAt).toLocaleString()
-              : "Live Archive"}
-          </span>
+          {!isEditingDate ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-on-surface">
+                {clip.recordedAt
+                  ? new Date(clip.recordedAt).toLocaleString()
+                  : clip.createdAt
+                  ? new Date(clip.createdAt).toLocaleString()
+                  : "Live Archive"}
+              </span>
+              <button
+                type="button"
+                onClick={() => {
+                  const currentVal = clip.recordedAt || clip.createdAt;
+                  if (currentVal) {
+                    const d = new Date(currentVal);
+                    const localIso = new Date(d.getTime() - d.getTimezoneOffset() * 60000)
+                      .toISOString()
+                      .slice(0, 16);
+                    setDateDraft(localIso);
+                  } else {
+                    setDateDraft("");
+                  }
+                  setIsEditingDate(true);
+                }}
+                className="text-zinc-500 hover:text-primary p-0.5 rounded hover:bg-surface-container transition-colors cursor-pointer"
+                title="Edit recording timestamp"
+              >
+                <span className="material-symbols-outlined text-[12px]">edit_calendar</span>
+              </button>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1">
+              <input
+                type="datetime-local"
+                value={dateDraft}
+                onChange={(e) => setDateDraft(e.target.value)}
+                className="bg-surface-container border border-primary/50 text-white rounded px-1.5 py-0.5 text-[10px] outline-none"
+              />
+              <button
+                type="button"
+                disabled={isSavingDate}
+                onClick={handleSaveDate}
+                className="p-1 rounded bg-primary text-on-primary hover:brightness-110 cursor-pointer text-[10px] disabled:opacity-50"
+                title="Save Date"
+              >
+                <span className="material-symbols-outlined text-[12px]">check</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsEditingDate(false)}
+                className="p-1 rounded bg-surface-container text-zinc-400 hover:text-white cursor-pointer text-[10px]"
+                title="Cancel"
+              >
+                <span className="material-symbols-outlined text-[12px]">close</span>
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -2322,10 +2636,73 @@ export function DeepVideoPlayerModal({
                 isTransitioning ? "opacity-40 -translate-y-1" : "opacity-100 translate-y-0"
               }`}>
                 <div className="flex items-center justify-between gap-2">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <h1 className="font-semibold text-base sm:text-lg text-on-surface tracking-tight leading-snug truncate">
-                      {clip.title}
-                    </h1>
+                  <div className="flex items-center gap-2 min-w-0 flex-1">
+                    {isEditingTitle ? (
+                      <div className="flex items-center gap-1.5 flex-1 max-w-xl animate-fade-in">
+                        <input
+                          type="text"
+                          autoFocus
+                          value={titleDraft}
+                          onChange={(e) => setTitleDraft(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              handleSaveTitle();
+                            } else if (e.key === "Escape") {
+                              setIsEditingTitle(false);
+                              setTitleDraft(clip.title);
+                            }
+                          }}
+                          placeholder="Rename clip title..."
+                          className="flex-1 bg-surface-container px-3 py-1.5 rounded-lg border border-primary text-sm sm:text-base font-semibold text-white outline-none focus:ring-1 focus:ring-primary font-sans"
+                        />
+                        <button
+                          type="button"
+                          disabled={isSavingTitle}
+                          onClick={handleSaveTitle}
+                          className="px-2.5 py-1.5 rounded-lg bg-primary hover:brightness-110 text-on-primary text-xs font-semibold flex items-center gap-1 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
+                          title="Save Title (Enter)"
+                        >
+                          <span className="material-symbols-outlined text-[15px]">check</span>
+                          <span>Save</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setIsEditingTitle(false);
+                            setTitleDraft(clip.title);
+                          }}
+                          className="px-2.5 py-1.5 rounded-lg bg-surface-container hover:bg-surface-container-high text-zinc-400 hover:text-white text-xs font-medium cursor-pointer transition-colors"
+                          title="Cancel (Esc)"
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-2 min-w-0 group/title">
+                        <h1
+                          className="font-semibold text-base sm:text-lg text-on-surface tracking-tight leading-snug truncate cursor-pointer hover:text-primary transition-colors"
+                          onClick={() => {
+                            setTitleDraft(clip.title);
+                            setIsEditingTitle(true);
+                          }}
+                          title="Click to rename"
+                        >
+                          {clip.title}
+                        </h1>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTitleDraft(clip.title);
+                            setIsEditingTitle(true);
+                          }}
+                          className="p-1 rounded-md text-zinc-500 hover:text-primary hover:bg-surface-container transition-all cursor-pointer opacity-70 group-hover/title:opacity-100"
+                          title="Rename footage"
+                        >
+                          <span className="material-symbols-outlined text-[15px]">edit</span>
+                        </button>
+                      </div>
+                    )}
                     <button
                       type="button"
                       disabled={isFavoriteUpdating}
@@ -2346,9 +2723,18 @@ export function DeepVideoPlayerModal({
 
                 {/* Metadata Pills Row */}
                 <div className="flex flex-wrap items-center gap-2 text-xs text-on-surface-variant font-mono">
-                  <span className="px-2 py-0.5 rounded bg-surface-container border border-outline-variant/30 text-primary font-semibold">
-                    {clip.game?.name || "GameVault Archive"}
-                  </span>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsGamePickerOpen(true);
+                      fetchAvailableGames();
+                    }}
+                    className="px-2 py-0.5 rounded bg-surface-container hover:bg-surface-container-high border border-outline-variant/30 hover:border-primary/40 text-primary font-semibold transition-colors cursor-pointer flex items-center gap-1"
+                    title="Change game category"
+                  >
+                    <span>{clip.game?.name || "GameVault Archive"}</span>
+                    <span className="material-symbols-outlined text-[11px] opacity-70">arrow_drop_down</span>
+                  </button>
                   <span className="text-zinc-600">•</span>
                   <span>{clip.width} × {clip.height}</span>
                   <span className="text-zinc-600">•</span>
@@ -2453,17 +2839,169 @@ export function DeepVideoPlayerModal({
 
               {/* Game Category & Subfolder Assignment Bar */}
               <div className="flex flex-wrap items-center gap-2 pt-2 pb-1 border-b border-outline-variant/20">
-                {clip.game ? (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-xs font-mono font-medium">
-                    <span className="material-symbols-outlined text-[15px]">sports_esports</span>
-                    <span>{clip.game.name}</span>
-                  </span>
-                ) : (
-                  <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface-container border border-outline-variant/30 text-zinc-400 text-xs font-mono font-medium">
-                    <span className="material-symbols-outlined text-[15px]">help_outline</span>
-                    <span>Uncategorized</span>
-                  </span>
-                )}
+                {/* Game Category Interactive Picker & Creator */}
+                <div className="relative inline-block" ref={gamePickerRef}>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsGamePickerOpen(!isGamePickerOpen);
+                      fetchAvailableGames();
+                    }}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full border text-xs font-mono font-medium transition-all cursor-pointer shadow-xs active:scale-95 group/cat ${
+                      clip.game
+                        ? "bg-primary/10 hover:bg-primary/20 border-primary/30 text-primary"
+                        : "bg-surface-container hover:bg-surface-container-high border-outline-variant/40 hover:border-primary/40 text-zinc-300 hover:text-white"
+                    }`}
+                    title="Click to assign, reassign, or change game category"
+                  >
+                    <span className="material-symbols-outlined text-[15px] text-primary">
+                      {clip.game ? "sports_esports" : "help_outline"}
+                    </span>
+                    <span className="font-semibold">{clip.game?.name || "Uncategorized"}</span>
+                    <span className="text-[10px] text-zinc-400 group-hover/cat:text-zinc-200 border-l border-white/10 pl-1.5 ml-0.5">
+                      Change
+                    </span>
+                    <span className="material-symbols-outlined text-[13px] opacity-70 group-hover/cat:translate-y-0.5 transition-transform">
+                      arrow_drop_down
+                    </span>
+                  </button>
+
+                  {/* Game Category Dropdown Popover */}
+                  {isGamePickerOpen && (
+                    <div className="absolute top-full mt-1.5 left-0 z-50 w-80 bg-[#0e1017] border border-outline-variant/60 rounded-xl shadow-2xl p-3 flex flex-col gap-2.5 backdrop-blur-xl animate-scale-in">
+                      {/* Header */}
+                      <div className="flex items-center justify-between pb-1.5 border-b border-white/10">
+                        <span className="text-[11px] font-mono text-zinc-300 font-semibold uppercase tracking-wider flex items-center gap-1.5">
+                          <span className="material-symbols-outlined text-[15px] text-primary">sports_esports</span>
+                          Game Category
+                        </span>
+                        <span className="text-[10px] text-zinc-500 font-mono">
+                          {availableGames.filter((g) => !g.isUncategorized).length} games
+                        </span>
+                      </div>
+
+                      {/* Quick Search */}
+                      <div className="relative">
+                        <span className="material-symbols-outlined absolute left-2.5 top-1/2 -translate-y-1/2 text-[14px] text-zinc-500">
+                          search
+                        </span>
+                        <input
+                          type="text"
+                          autoFocus
+                          placeholder="Search games or type new..."
+                          value={gameSearchQuery}
+                          onChange={(e) => setGameSearchQuery(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && gameSearchQuery.trim()) {
+                              e.preventDefault();
+                              if (exactMatchGame) {
+                                const found = availableGames.find(
+                                  (g) => g.name.toLowerCase() === gameSearchQuery.trim().toLowerCase()
+                                );
+                                if (found) handleSetClipGame(found.id);
+                              } else {
+                                handleCreateAndAssignGame(gameSearchQuery.trim());
+                              }
+                            } else if (e.key === "Escape") {
+                              setIsGamePickerOpen(false);
+                            }
+                          }}
+                          className="w-full bg-surface-container rounded-lg pl-8 pr-7 py-1.5 text-xs text-on-surface font-mono border border-outline-variant/40 focus:border-primary outline-none"
+                        />
+                        {gameSearchQuery && (
+                          <button
+                            type="button"
+                            onClick={() => setGameSearchQuery("")}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 cursor-pointer"
+                          >
+                            <span className="material-symbols-outlined text-[13px]">close</span>
+                          </button>
+                        )}
+                      </div>
+
+                      {/* Games List (Scrollable) */}
+                      <div className="flex flex-col gap-1 max-h-52 overflow-y-auto pr-1">
+                        {/* Uncategorized Option */}
+                        {(!gameSearchQuery || "uncategorized".includes(gameSearchQuery.toLowerCase())) && (
+                          <button
+                            type="button"
+                            disabled={!clip.game || isGameUpdating}
+                            onClick={() => handleSetClipGame(null)}
+                            className={`flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-mono transition-colors text-left ${
+                              !clip.game
+                                ? "bg-zinc-800 text-white font-semibold border border-zinc-700"
+                                : "hover:bg-surface-container text-zinc-400 hover:text-zinc-200 cursor-pointer"
+                            }`}
+                          >
+                            <span className="flex items-center gap-2 truncate">
+                              <span className="material-symbols-outlined text-[15px] text-zinc-500">help_outline</span>
+                              <span>Uncategorized (No Game)</span>
+                            </span>
+                            {!clip.game && (
+                              <span className="material-symbols-outlined text-[14px] text-primary">check</span>
+                            )}
+                          </button>
+                        )}
+
+                        {/* Existing Games */}
+                        {filteredGames.map((g) => {
+                          const isCurrent = clip.game?.id === g.id;
+                          return (
+                            <button
+                              key={g.id}
+                              type="button"
+                              disabled={isCurrent || isGameUpdating}
+                              onClick={() => handleSetClipGame(g.id)}
+                              className={`flex items-center justify-between px-2.5 py-2 rounded-lg text-xs font-mono transition-colors text-left ${
+                                isCurrent
+                                  ? "bg-primary/15 text-primary font-semibold border border-primary/30"
+                                  : "hover:bg-surface-container text-zinc-300 hover:text-white cursor-pointer"
+                              }`}
+                            >
+                              <span className="flex items-center gap-2 truncate">
+                                <span
+                                  className="w-2 h-2 rounded-full shrink-0"
+                                  style={{ backgroundColor: g.accentColor || "#0A84FF" }}
+                                />
+                                <span className="truncate">{g.name}</span>
+                                {g.clipCount !== undefined && (
+                                  <span className="text-[10px] text-zinc-500 font-normal">
+                                    ({g.clipCount} {g.clipCount === 1 ? "clip" : "clips"})
+                                  </span>
+                                )}
+                              </span>
+                              {isCurrent && (
+                                <span className="material-symbols-outlined text-[14px] text-primary">check</span>
+                              )}
+                            </button>
+                          );
+                        })}
+
+                        {filteredGames.length === 0 && gameSearchQuery.trim() && !exactMatchGame && (
+                          <div className="py-1 px-1 text-zinc-500 text-xs font-mono">
+                            No existing category with this name
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Quick Create Game if search query doesn't match an existing game */}
+                      {gameSearchQuery.trim() && !exactMatchGame && (
+                        <div className="pt-2 border-t border-white/10 flex flex-col gap-1.5">
+                          <span className="text-[10px] text-zinc-500 font-mono">New Category:</span>
+                          <button
+                            type="button"
+                            disabled={isGameUpdating}
+                            onClick={() => handleCreateAndAssignGame(gameSearchQuery.trim())}
+                            className="flex items-center justify-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary hover:brightness-110 text-on-primary font-semibold text-xs font-mono transition-all cursor-pointer shadow-md disabled:opacity-50"
+                          >
+                            <span className="material-symbols-outlined text-[14px]">add_circle</span>
+                            <span className="truncate">Create &amp; Assign &quot;{gameSearchQuery.trim()}&quot;</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
 
                 {/* Subfolder Picker & Creator */}
                 <div className="relative inline-block" ref={folderPickerRef}>
